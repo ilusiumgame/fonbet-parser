@@ -1,0 +1,41 @@
+name: Update Segments
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # каждый день в 6:00 UTC
+  workflow_dispatch:  # ручной запуск из GitHub UI
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Update segment mappings
+        run: python extract_segments.py
+        continue-on-error: true
+
+      - name: Check for changes
+        id: check
+        run: |
+          if git diff --quiet segment_mappings.json 2>/dev/null; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit and push
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add segment_mappings.json
+          git commit -m "Update segment mappings [automated]"
+          git push
