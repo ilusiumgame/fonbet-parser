@@ -1,13 +1,21 @@
 """
 Скрипт для запуска профиля Octo Browser с портом отладки для Chrome DevTools MCP
 """
+import os
 import requests
 import sys
+from dotenv import load_dotenv
 
-# Конфигурация
-API_TOKEN = "33818ecfe9e545fb88f3b7b8e679d44d"
-PROFILE_UUID = "99d99d59f2424cb8b424171bfd84a403"  # Fonbet - Makarenko
-DEBUG_PORT = 9222
+load_dotenv()
+
+# Конфигурация из .env или переменных окружения
+API_TOKEN = os.environ.get("OCTO_API_TOKEN", "")
+PROFILE_UUID = os.environ.get("OCTO_PROFILE_UUID", "")
+DEBUG_PORT = int(os.environ.get("OCTO_DEBUG_PORT", "9222"))
+
+if not API_TOKEN or not PROFILE_UUID:
+    print("Ошибка: задайте OCTO_API_TOKEN и OCTO_PROFILE_UUID в .env или переменных окружения")
+    sys.exit(1)
 
 def stop_profile():
     """Остановить профиль"""

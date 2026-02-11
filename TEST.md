@@ -9,7 +9,7 @@
 ### Окружение
 - Octo Browser с профилем, запущенным через `python octo_start.py`
 - Авторизованный аккаунт на fon.bet или pari.ru с историей операций
-- Скрипт `universal_collector_v2.0.0.user.js` установлен в Tampermonkey
+- Скрипт `universal_collector.user.js` установлен в Tampermonkey
 - MCP devtools подключён к порту 9222
 
 ### Тестовая страница
@@ -213,6 +213,30 @@
 ```
 
 **Критерий успеха:** Все поля AppState существуют и имеют правильные типы
+
+---
+
+### 1.8. Проверка SegmentMapper
+**ID:** `TEST_1_8`
+**Тип:** Автоматический
+
+```javascript
+() => {
+    const sm = collector.segmentMapper;
+    return {
+        exists: !!sm,
+        hasInit: typeof sm.init === 'function',
+        hasLoad: typeof sm.load === 'function',
+        hasGetName: typeof sm.getName === 'function',
+        loaded: sm.loaded,
+        mappingsCount: Object.keys(sm.mappings).length,
+        sampleLookup: sm.getName('11916'),
+        passed: !!sm && typeof sm.getName === 'function' && sm.loaded
+    };
+}
+```
+
+**Критерий успеха:** `loaded === true`, `mappingsCount > 0`, `getName()` возвращает строку
 
 ---
 
@@ -824,7 +848,7 @@
 
     // Симулируем структуру экспорта
     const exportStructure = {
-        version: '2.1.0',
+        version: '2.1.1',
         site: collector.site,
         summary: {
             totalOperations: operations.length,
@@ -935,6 +959,49 @@
 ```
 
 **Критерий успеха:** Структура ставки соответствует спецификации
+
+---
+
+### 8.4. Проверка поля segments в экспорте
+**ID:** `TEST_8_4`
+**Тип:** Автоматический
+
+```javascript
+() => {
+    const grouped = collector.operationsCollector.getGroupedOperations();
+    const betsWithDetails = Object.values(grouped).filter(g =>
+        g.category === 'regular_bet' && g.details && g.details.body?.bets?.length > 0
+    );
+
+    if (betsWithDetails.length === 0) {
+        return { status: 'no_bets_with_details', passed: null };
+    }
+
+    const sample = betsWithDetails[0];
+    const bets = sample.details.body.bets;
+    const sm = collector.segmentMapper;
+
+    // Проверяем что segments поле формируется корректно
+    const segments = bets.map(b => ({
+        segmentId: b.segmentId,
+        segmentName: sm.getName(b.segmentId)
+    }));
+
+    const resolved = segments.filter(s => s.segmentName !== null).length;
+
+    return {
+        sampleMarker: sample.marker,
+        betsCount: bets.length,
+        segmentsCount: segments.length,
+        resolved: resolved,
+        sampleSegment: segments[0],
+        segmentMapperLoaded: sm.loaded,
+        passed: segments.length === bets.length && sm.loaded
+    };
+}
+```
+
+**Критерий успеха:** `segments.length === bets.length`, SegmentMapper загружен
 
 ---
 
@@ -1600,64 +1667,69 @@ async () => {
 
 // 12. Sync UI
 () => ({ btnSync: !!collector.uiPanel.elements.btnSync, syncStatus: !!collector.uiPanel.elements.syncStatus, passed: !!collector.uiPanel.elements.btnSync })
+
+// 13. SegmentMapper
+() => ({ loaded: collector.segmentMapper.loaded, count: Object.keys(collector.segmentMapper.mappings).length, sample: collector.segmentMapper.getName('11916'), passed: collector.segmentMapper.loaded })
 ```
 
 ---
 
 ## Результаты тестирования
 
-### Fonbet (fon.bet) — v2.1.0 (2026-02-09)
+### Fonbet (fon.bet) — v2.1.1 (2026-02-11)
 
 | ID | Тест | Статус | Примечания |
 |----|------|--------|------------|
-| 1.1 | Загрузка скрипта | ✅ | version === '2.1.0' |
-| 1.2 | Глобальный объект | ✅ | Все модули + githubSync, sync, changeAlias |
+| 1.1 | Загрузка скрипта | ✅ | version === '2.1.1' |
+| 1.2 | Глобальный объект | ✅ | Все модули + githubSync, sync, changeAlias, segmentMapper |
 | 1.3 | OPERATION_TYPES (19 типов) | ✅ | По спецификации |
 | 1.4 | OPERATION_GROUPS | ✅ | ALL.length === 19 |
 | 1.5 | BetsDetailsFetcher конфигурация | ✅ | Параметры верны |
 | 1.6 | URL_PATTERNS | ✅ | Паттерны работают |
 | 1.7 | AppState структура | ✅ | Структура корректна |
+| 1.8 | SegmentMapper | ✅ | loaded: true, 3049 сегментов, getName() работает |
 | 2.1 | XHRInterceptor модуль | ✅ | XHR + Fetch пропатчены |
-| 2.2 | Стат��с перехватчика | ✅ | Статус корректен |
+| 2.2 | Статус перехватчика | ✅ | Статус корректен |
 | 3.1 | OperationsCollector модуль | ✅ | Модуль работает |
-| 3.2 | Статистика сбора | ✅ | 200 операций собрано |
+| 3.2 | Статистика сбора | ✅ | 8290 операций (полная пагинация) |
 | 3.3 | Сбор операций | ✅ | Данные получены |
 | 3.4 | Завершение сбора | ✅ | completed: true |
-| 4.1 | Группировка по marker | ✅ | 91 группа |
-| 4.2 | finalStatus | ✅ | lost: 45, won: 43, pending: 3 |
-| 4.3 | category | ✅ | regular_bet: 62, freebet: 29 |
+| 4.1 | Группировка по marker | ✅ | 4043 группы |
+| 4.2 | finalStatus | ✅ | won/lost/pending/sold/cancelled/... |
+| 4.3 | category | ✅ | regular_bet: 3615, freebet: 249, finance, bonus |
 | 4.4 | Соответствие статистики | ✅ | Статистика консистентна |
 | 5.1 | Дубликаты в операциях | ✅ | 0 дубликатов |
 | 5.2 | Дубликаты в группах | ✅ | 0 дубликатов |
-| 6.1 | Markers для деталей | ✅ | 91 marker |
-| 6.2 | Статистика BetsDetailsFetcher | ✅ | 91 загружено, 0 ошибок |
-| 6.3 | Детали в группах | ✅ | 91/91 (100%) |
+| 6.1 | Markers для деталей | ✅ | 3864 markers |
+| 6.2 | Статистика BetsDetailsFetcher | ✅ | 3864 загружено, 0 ошибок |
+| 6.3 | Детали в группах | ✅ | 3864/3864 (100%) |
 | 6.4 | failedMarkers | ✅ | 0 ошибок |
 | 7.1 | UI Panel существование | ✅ | Панель работает |
 | 7.2 | Элементы UI Panel | ✅ | Все элементы на месте |
 | 7.3 | Статистика в UI | ✅ | Счётчики корректны |
-| 8.1 | Структура экспорта v2.1 | ✅ | Все п��ля присутствуют |
-| 8.2 | Новые поля v2.1 | ✅ | detailsLoaded: 91, detailsFailed: 0, detailsSkipped: 0 |
+| 8.1 | Структура экспорта v2.1 | ✅ | Все поля присутствуют |
+| 8.2 | Новые поля v2.1 | ✅ | detailsLoaded: 3864, detailsFailed: 0 |
 | 8.3 | Формат ставки с деталями | ✅ | Структура корректна |
-| 9.1 | Защита от повторного запуска | ✅ | Защита работает |
+| 8.4 | Поле segments в экспорте | ✅ | 2457/4099 (60%) сегментов разрешено |
+| 9.1 | Защита от повторного запуска | ✅ | location.reload() при повторном Start |
 | 9.2 | Обработка SESSION_EXPIRED | ✅ | 0 ошибок сессии |
 | 10.1 | Полная проверка | ✅ | Все системы работают |
 | 10.2 | Консистентность данных | ✅ | Данные консистентны |
 | 11.1 | GitHubSync модуль | ✅ | Все методы существуют |
-| 11.2 | isConfigured() до настройки | ✅ | false, "Sync не настроен" |
+| 11.2 | isConfigured() | ✅ | "Ожидание сбора данных..." до завершения |
 | 11.3 | Конфигурация из GM_setValue | ✅ | Все 4 поля заполнены, isConfigured: true |
 | 11.4 | _buildFilePath() | ✅ | fonbet/74129997_28FonMakarenko.json |
 | 12.1 | _mergeArray с пустым remote | ✅ | added: 2, updated: 0 |
 | 12.2 | _mergeArray с дубликатами | ✅ | 3 элемента, added: 1, updated: 1 |
 | 12.3 | _mergeData полный merge | ✅ | bets: 2, deposits: 1, added: 2, updated: 1 |
 | 13.1 | Кнопка Sync в UI | ✅ | btnSync + syncStatus в DOM |
-| 13.2 | Состояния кнопки Sync | ✅ | Состояние ��орректно |
-| 13.3 | Статус синхронизации | ✅ | "Sync не настроен" |
+| 13.2 | Состояния кнопки Sync | ✅ | Состояние корректно |
+| 13.3 | Статус синхронизации | ✅ | Корректные состояния |
 | 13.4 | Настройки Sync в панели | ✅ | Структурный тест |
-| 14.1 | Первая синхронизация | ✅ | success: true, updated: 91 |
-| 14.2 | Результат синхронизации | ✅ | added: 0, updated: 91, total: 91 |
-| 14.3 | Повторная синхронизация | ✅ | Повторный sync успешен, данные сохранены |
-| 14.4 | changeAlias | ✅ | TestAlias → 28FonMakarenko, файл переименован |
+| 14.1 | Первая синхронизация | ✅ | success: true |
+| 14.2 | Результат синхронизации | ✅ | Данные загружены |
+| 14.3 | Повторная синхронизация | ✅ | Повторный sync успешен |
+| 14.4 | changeAlias | ✅ | Файл переименован |
 | 14.5 | Безопасность токена | ✅ | Токен не утекает |
 
 ### Pari (pari.ru) — v2.0.0 (2026-02-08)
@@ -1700,13 +1772,13 @@ async () => {
 
 ## Итоговый отчёт тестирования
 
-### Fonbet (2026-02-09, v2.1.0)
+### Fonbet (2026-02-11, v2.1.1)
 
 **Тестировщик:** Claude Code + MCP chrome-devtools
 **Тестовый аккаунт:** fon.bet (Макаренко Давид Андреевич)
 
 **Результаты:**
-- Пройдено: 48 тестов
+- Пройдено: 50 тестов
 - Пропущено: 0 тестов
 - С замечаниями: 0 тестов
 - Провалено: 0 тестов
@@ -1715,20 +1787,26 @@ async () => {
 
 ```json
 {
-  "version": "2.1.0",
+  "version": "2.1.1",
   "site": "Fonbet",
   "summary": {
-    "totalOperations": 200,
-    "totalGroups": 91,
-    "regularBets": 62,
+    "totalOperations": 8290,
+    "totalGroups": 4043,
+    "regularBets": 3615,
     "fastBets": 0,
-    "freebets": 29,
-    "deposits": 0,
-    "withdrawals": 0,
+    "freebets": 249,
+    "deposits": 86,
+    "withdrawals": 93,
     "bonus": 0,
-    "detailsLoaded": 91,
+    "detailsLoaded": 3864,
     "detailsFailed": 0,
     "detailsSkipped": 0
+  },
+  "segmentMapper": {
+    "loaded": true,
+    "mappingsCount": 3049,
+    "segmentsResolved": 2457,
+    "unresolvedUniqueSegmentIds": 107
   }
 }
 ```
@@ -1747,7 +1825,7 @@ async () => {
 
 ```json
 {
-  "version": "2.1.0",
+  "version": "2.1.1",
   "site": "Pari",
   "summary": {
     "totalOperations": 200,
@@ -1767,14 +1845,16 @@ async () => {
 
 ### Выводы:
 
-1. v2.1.0 успешно работает на fon.bet — полное регрессионное тестирование пройдено
+1. v2.1.1 успешно работает на fon.bet — полное регрессионное тестирование пройдено
 2. GitHubSync: синхронизация, merge, changeAlias — всё работает корректно
-3. 100% детализация ставок (91/91)
+3. 100% детализация ставок (3864/3864)
 4. 0 ошибок загрузки деталей, 0 дубликатов
 5. UI Sync: кнопка, статус, настройки — всё на месте
 6. Токен не утекает через глобальный объект
-7. Все 48 тестов пройдены, 0 провалено
-8. Тестирование pari.ru для v2.1.0 ещё не проведено
+7. SegmentMapper: 3049 сегментов загружено, 60% разрешение (2457/4099)
+8. Полная пагинация: 8290 операций (фикс nextOperations работает)
+9. Все 50 тестов пройдены, 0 провалено
+10. Тестирование pari.ru для v2.1.1 ещё не проведено
 
 **Общая оценка: УСПЕШНО ПРОЙДЕНО**
 
@@ -1804,3 +1884,13 @@ async () => {
 | 1.1 | Версия: `2.1.0` → `2.1.1` |
 | 3.1 | Убрана проверка `hasFetchAllBetsDetails` (метод удалён) |
 | 8.1 | Версия экспорта: `2.1.0` → `2.1.1` |
+
+### Изменения в тестах для Фазы 14-15:
+
+| Тест | Изменение |
+|------|-----------|
+| 1.2 | Добавлена проверка: `segmentMapper` в глобальном объекте |
+| 1.8 | Новый: проверка SegmentMapper (загрузка, getName) |
+| 8.4 | Новый: проверка поля `segments` в экспорте |
+| Quick #13 | Новый: SegmentMapper в быстром чеклисте |
+

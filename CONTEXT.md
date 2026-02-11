@@ -2,7 +2,7 @@
 
 Tampermonkey скрипт для сбора истории операций с fon.bet и pari.ru. Работает на странице `/account/history/operations` обоих сайтов. Автоопределение сайта, перехват XHR/fetch, сбор операций через API, группировка по marker, автоматическая загрузка деталей ставок, экспорт в JSON v2.1, инкрементальная синхронизация с GitHub.
 
-**Версия:** v2.1.1 — Cleanup, UI-фиксы, исправления пагинации, синхронизации и nextOperations
+**Версия:** v2.1.1 — Cleanup, UI-фиксы, SegmentMapper, исправления пагинации, синхронизации и nextOperations
 
 ---
 
@@ -10,7 +10,7 @@ Tampermonkey скрипт для сбора истории операций с f
 
 ```
 Файл:    universal_collector.user.js
-Строки:  ~3473
+Строки:  ~3520
 Версия:  2.1.1
 ```
 
@@ -282,6 +282,28 @@ const UIPanel = {
 }
 ```
 
+### Формат элемента bets[] (после _formatBetGroup)
+
+```javascript
+{
+    "marker": "3383629549",
+    "regId": "3383629549",
+    "status": "lost",
+    "time": 1770488783,
+    "timeFormatted": "2026-02-08T...",
+    "segments": [
+        { "segmentId": 11918, "segmentName": "Англия. Премьер-лига. Сезон 25/26" }
+    ],
+    "operations": [
+        { "operationId": 1, "operationType": "Сделана ставка", "sum": -4010000, "time": 1770488783 },
+        { "operationId": 4, "operationType": "Ставка проиграна", "sum": 0, "time": 1770491060 }
+    ],
+    "details": { /* coupon/info response */ }
+}
+```
+
+**Поле `segments`:** Массив `{segmentId, segmentName}` — по одному элементу на каждый `bet` из `details.body.bets`. Имя подставляется из SegmentMapper; если маппинг не найден — `segmentName: null`.
+
 ### Формат файла в GitHub (sync)
 
 ```javascript
@@ -487,8 +509,10 @@ regId: group.regId || group.details?.header?.regId || group.marker
 - Исправлена кодировка Unicode в alert GitHubSync
 - **Фикс nextOperations:** удалён перехват `nextOperations` из всех интерсепторов (earlyInit, XHRInterceptor) — страница поллит этот endpoint для real-time обновлений, кэшированные ответы (`completed:true`) останавливали коллектор после 200 операций вместо полной пагинации через `prevOperations`. Результат: 8282 операции вместо 200.
 - **Фикс Git Blob API:** `_getFile()` использует fallback на Git Blob API (`/git/blobs/{sha}`) для файлов > 1 MB, которые Contents API возвращает без content. Результат: sync работает для файлов до 100 MB.
+- **SegmentMapper (Фаза 14):** модуль загрузки `segment_mappings.json` из GitHub Raw через GM_xmlhttpRequest. Поле `segments` в `_formatBetGroup` — массив `{segmentId, segmentName}` для каждого события в ставке. ~3049 сегментов, ~60% разрешение.
+- **Баг-фиксы (Фаза 15):** повторный Start делает `location.reload()` вместо пустого reset; `getSyncStatus()` показывает "Ожидание сбора данных..." до завершения сбора; `.fc-settings-checkbox-field` с явным белым цветом текста.
 - Обновлён @author
-- Итого: 3549 → ~3473 строк
+- Итого: 3549 → ~3520 строк
 
 ### v2.1.0
 - Модуль GitHubSync: инкрементальная синхронизация с приватным GitHub-репозиторием
@@ -527,6 +551,7 @@ regId: group.regId || group.details?.header?.regId || group.marker
 ## Внешние зависимости
 
 - **GitHub API:** `https://api.github.com` (для GitHubSync, через GM_xmlhttpRequest)
+- **GitHub Raw:** `https://raw.githubusercontent.com` (для SegmentMapper, через GM_xmlhttpRequest)
 
 ---
 
