@@ -9,7 +9,7 @@ Tampermonkey скрипт для сбора истории операций с f
 ## Метрики
 
 ```
-Файл:    universal_collector_v2.0.0.user.js
+Файл:    universal_collector.user.js
 Строки:  ~3473
 Версия:  2.1.1
 ```
@@ -19,24 +19,25 @@ Tampermonkey скрипт для сбора истории операций с f
 ## Структура кода (v2.1.1)
 
 ```
-1-15:          Tampermonkey Metadata (@run-at document-start, @match fon.bet + pari.ru,
-               @grant GM_xmlhttpRequest, @connect api.github.com)
+1-16:          Tampermonkey Metadata (@run-at document-start, @match fon.bet + pari.ru,
+               @grant GM_xmlhttpRequest, @connect api.github.com + raw.githubusercontent.com)
 23:            Constants (VERSION, DEBUG_MODE)
 28-45:         logger
 47-50:         URL_PATTERNS (LAST/PREV_OPERATIONS)
-54-115:        SiteDetector (автоопределение сайта)
-116-670:       OperationsCollector (динамические URL через SiteDetector)
-671-861:       BetsDetailsFetcher (динамический coupon/info URL)
-862-962:       SettingsManager
-963-967:       LIMITS (UI_UPDATE_INTERVAL_MS)
-969-988:       AppState (isInterceptorRunning, isCollectionCompleted, config)
-990-998:       getCurrentPageType()
-1000-1218:     XHRInterceptor (LAST/PREV_OPERATIONS)
-1219-2504:     UIPanel (кнопка Sync, статус, toggle-переключатели, настройки Sync)
-2505-2709:     ExportModule (_buildExportData + exportOperations)
-2710-3292:     GitHubSync (API, merge, sync, setup dialog, changeAlias)
-3293-3366:     init() (SiteDetector.detect(), GitHubSync.init() при старте)
-3367-3459:     earlyInit() + Bootstrap
+54-113:        SiteDetector (автоопределение сайта)
+114-163:       SegmentMapper (загрузка segment_mappings.json из GitHub Raw)
+164-720:       OperationsCollector (динамические URL через SiteDetector)
+721-911:       BetsDetailsFetcher (динамический coupon/info URL)
+912-1012:      SettingsManager
+1013-1017:     LIMITS (UI_UPDATE_INTERVAL_MS)
+1019-1038:     AppState (isInterceptorRunning, isCollectionCompleted, config)
+1040-1048:     getCurrentPageType()
+1050-1268:     XHRInterceptor (LAST/PREV_OPERATIONS)
+1269-2554:     UIPanel (кнопка Sync, статус, toggle-переключатели, настройки Sync)
+2555-2759:     ExportModule (_buildExportData + exportOperations, segments в _formatBetGroup)
+2760-3355:     GitHubSync (API, merge, sync, setup dialog, changeAlias)
+3356-3430:     init() (SiteDetector.detect(), SegmentMapper.init(), GitHubSync.init() при старте)
+3431-3523:     earlyInit() + Bootstrap
 ```
 
 ---
@@ -133,6 +134,16 @@ marker: 12345678905
 ---
 
 ## Ключевые модули
+
+### SegmentMapper
+```javascript
+const SegmentMapper = {
+    init(),                              // Загрузка маппингов при старте
+    load(),                              // GM_xmlhttpRequest на GitHub Raw
+    getName(segmentId)                   // segmentId → название лиги/турнира
+};
+// URL: https://raw.githubusercontent.com/ilusiumgame/fonbet-parser/main/segment_mappings.json
+```
 
 ### OperationsCollector
 ```javascript
@@ -322,6 +333,10 @@ collector.betsDetailsFetcher.getFailedMarkers()
 // SiteDetector
 collector.siteDetector.currentSite
 collector.siteDetector.getSiteName()
+
+// SegmentMapper
+collector.segmentMapper.loaded                    // Загружены ли маппинги
+collector.segmentMapper.getName(segmentId)        // Получить название по ID
 ```
 
 ### Синхронизация (v2.1.0)
@@ -459,7 +474,8 @@ regId: group.regId || group.details?.header?.regId || group.marker
 ## История версий
 
 ### v2.1.1 (текущая)
-- Cleanup: удалён мёртвый код (EventBus, SegmentMapper, onCollectionComplete, setActiveGroups, fetchAllBetsDetails, UIPanel.destroy, Notification.requestPermission)
+- Cleanup: удалён мёртвый код (EventBus, onCollectionComplete, setActiveGroups, fetchAllBetsDetails, UIPanel.destroy, Notification.requestPermission)
+  - **SegmentMapper возвращён в Фазе 14** — загрузка `segment_mappings.json` из GitHub Raw, поле `segments` в экспорте
 - Объединены дублированные ветки завершения сбора (data.completed === true)
 - Hardcoded version → VERSION константа
 - Унифицирована валидация alias (убрана кириллица из changeAlias)
@@ -519,7 +535,70 @@ regId: group.regId || group.details?.header?.regId || group.marker
 - `CONTEXT.md` — общий контекст проекта (этот файл)
 - `TODO.md` — план разработки и история фаз
 - `TEST.md` — документация по тестированию
-- `OCTO_SETUP.md` — настройка Octo Browser + Chrome DevTools MCP
+
+---
+
+## Octo Browser + Chrome DevTools MCP
+
+Chrome DevTools MCP подключается к Octo Browser через remote debugging на порту **9222**.
+
+### Быстрый старт
+
+```bash
+# Запуск профиля с портом отладки
+python octo_start.py
+
+# Остановка профиля
+python octo_start.py stop
+```
+
+Конфигурация (API Token, Profile UUID, Debug Port) загружается из `.env` файла.
+
+### Альтернатива: обычный Chrome
+
+```bash
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222
+```
+
+### MCP Server Config
+
+```json
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "type": "stdio",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--browserUrl=http://127.0.0.1:9222"
+      ],
+      "env": {}
+    }
+  }
+}
+```
+
+### Переключение между профилями
+
+1. В Octo Browser скопируйте UUID нужного профиля
+2. Обновите `OCTO_PROFILE_UUID` в `.env`
+3. Запустите `python octo_start.py`
+
+**Один профиль за раз:** MCP подключается к порту 9222. При переключении сначала остановите текущий: `python octo_start.py stop`
+
+### Решение проблем
+
+```bash
+# Порт 9222 занят
+netstat -ano | grep 9222
+powershell -Command "Stop-Process -Id <PID> -Force"
+
+# Проверить MCP подключение
+claude mcp list
+```
 
 ---
 

@@ -11,8 +11,9 @@
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @connect      api.github.com
-// @updateURL    https://raw.githubusercontent.com/ilusiumgame/fonbet-parser/main/universal_collector_v2.0.0.user.js
-// @downloadURL  https://raw.githubusercontent.com/ilusiumgame/fonbet-parser/main/universal_collector_v2.0.0.user.js
+// @connect      raw.githubusercontent.com
+// @updateURL    https://raw.githubusercontent.com/ilusiumgame/fonbet-parser/main/universal_collector.user.js
+// @downloadURL  https://raw.githubusercontent.com/ilusiumgame/fonbet-parser/main/universal_collector.user.js
 // @run-at       document-start
 // ==/UserScript==
 
@@ -108,6 +109,53 @@
 
         getCouponInfoUrl() {
             return (this.currentSite?.couponInfoBase || this.SITES.FONBET.couponInfoBase) + '/coupon/info';
+        }
+    };
+
+    // Segment Mapper Module
+    const SegmentMapper = {
+        mappings: {},
+        loaded: false,
+        loading: false,
+        GITHUB_RAW_URL: 'https://raw.githubusercontent.com/ilusiumgame/fonbet-parser/main/segment_mappings.json',
+
+        init() {
+            this.load();
+        },
+
+        load() {
+            if (this.loaded || this.loading) return;
+            this.loading = true;
+            logger.log('[SegmentMapper] Загрузка маппингов...');
+
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: this.GITHUB_RAW_URL,
+                onload: (response) => {
+                    try {
+                        if (response.status === 200) {
+                            this.mappings = JSON.parse(response.responseText);
+                            this.loaded = true;
+                            const count = Object.keys(this.mappings).length;
+                            logger.info(`[SegmentMapper] Загружено ${count} сегментов`);
+                        } else {
+                            logger.error(`[SegmentMapper] Ошибка загрузки: HTTP ${response.status}`);
+                        }
+                    } catch (e) {
+                        logger.error('[SegmentMapper] Ошибка парсинга:', e);
+                    }
+                    this.loading = false;
+                },
+                onerror: (error) => {
+                    logger.error('[SegmentMapper] Ошибка сети:', error);
+                    this.loading = false;
+                }
+            });
+        },
+
+        getName(segmentId) {
+            if (!segmentId) return null;
+            return this.mappings[String(segmentId)] || null;
         }
     };
 
@@ -1841,6 +1889,7 @@
                     border-radius: 8px;
                     cursor: pointer;
                     transition: all 0.2s;
+                    color: rgba(255, 255, 255, 0.9);
                 }
 
                 .fc-settings-checkbox-field:hover {
@@ -2185,17 +2234,23 @@
          * Обработчик Start All
          */
         _handleStartAll() {
-            logger.log('🚀 [UIPanel] Start нажата');
+            logger.log('[UIPanel] Start нажата');
 
             const pageType = getCurrentPageType();
 
             if (pageType === 'operations') {
-                // Страница операций - запускаем OperationsCollector
-                console.log('📄 [UIPanel] Страница операций - запуск сбора операций');
-                XHRInterceptor.start(); // Для перехвата XHR операций
+                // Если уже был сбор — перезагружаем страницу для свежих данных
+                if (OperationsCollector.completed || OperationsCollector.collectedOperations.length > 0) {
+                    console.log('[UIPanel] Повторный старт — перезагрузка страницы...');
+                    location.reload();
+                    return;
+                }
+
+                console.log('[UIPanel] Страница операций - запуск сбора операций');
+                XHRInterceptor.start();
                 OperationsCollector.start();
             } else {
-                alert('⚠️ Скрипт работает только на странице /account/history/operations');
+                alert('Скрипт работает только на странице /account/history/operations');
             }
         },
 
@@ -2644,12 +2699,17 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
         // Форматирование группы ставок
         _formatBetGroup(group) {
             const firstOp = group.operations[0];
+            const bets = group.details?.body?.bets || [];
             return {
                 marker: group.marker,
                 regId: group.regId || group.details?.header?.regId || group.marker,
                 status: group.finalStatus,
                 time: firstOp?.time,
                 timeFormatted: firstOp ? new Date(firstOp.time * 1000).toISOString() : null,
+                segments: bets.map(b => ({
+                    segmentId: b.segmentId,
+                    segmentName: SegmentMapper.getName(b.segmentId)
+                })),
                 operations: group.operations.map(op => ({
                     operationId: op.operationId,
                     operationType: OperationsCollector.OPERATION_NAMES[op.operationId],
@@ -3297,6 +3357,9 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
                 }
                 return { state: 'error', text: `Ошибка: ${this.lastSyncResult.error}` };
             }
+            if (!AppState.isCollectionCompleted) {
+                return { state: 'waiting', text: 'Ожидание сбора данных...' };
+            }
             return { state: 'ready', text: 'Готов к Sync' };
         }
     };
@@ -3317,6 +3380,7 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
         BetsDetailsFetcher.init();
         SettingsManager.init();
         GitHubSync.init();
+        SegmentMapper.init();
 
         // Создаём UI панель
         UIPanel.create();
@@ -3333,6 +3397,7 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
             betsDetailsFetcher: BetsDetailsFetcher,
             settingsManager: SettingsManager,
             githubSync: GitHubSync,
+            segmentMapper: SegmentMapper,
             exportOperations: () => ExportModule.exportOperations(),
             fetchBetsDetails: () => OperationsCollector._autoLoadBetsDetails(),
             sync: () => GitHubSync.sync(),
