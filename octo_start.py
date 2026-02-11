@@ -6,7 +6,7 @@ import sys
 
 # Конфигурация
 API_TOKEN = "33818ecfe9e545fb88f3b7b8e679d44d"
-PROFILE_UUID = "99d99d59f2424cb8b424171bfd84a403"
+PROFILE_UUID = "99d99d59f2424cb8b424171bfd84a403"  # Fonbet - Makarenko
 DEBUG_PORT = 9222
 
 def stop_profile():

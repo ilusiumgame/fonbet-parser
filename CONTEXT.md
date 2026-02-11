@@ -2,7 +2,7 @@
 
 Tampermonkey скрипт для сбора истории операций с fon.bet и pari.ru. Работает на странице `/account/history/operations` обоих сайтов. Автоопределение сайта, перехват XHR/fetch, сбор операций через API, группировка по marker, автоматическая загрузка деталей ставок, экспорт в JSON v2.1, инкрементальная синхронизация с GitHub.
 
-**Версия:** v2.1.0 — GitHub Sync: инкрементальная синхронизация данных с приватным GitHub-репозиторием
+**Версия:** v2.1.1 — Cleanup: удаление мёртвого кода, исправление inconsistencies
 
 ---
 
@@ -10,34 +10,33 @@ Tampermonkey скрипт для сбора истории операций с f
 
 ```
 Файл:    universal_collector_v2.0.0.user.js
-Строки:  ~3549
-Версия:  2.1.0
+Строки:  ~3387
+Версия:  2.1.1
 ```
 
 ---
 
-## Структура кода (v2.1.0)
+## Структура кода (v2.1.1)
 
 ```
 1-15:          Tampermonkey Metadata (@run-at document-start, @match fon.bet + pari.ru,
                @grant GM_xmlhttpRequest, @connect api.github.com)
 17-21:         Constants (VERSION, DEBUG_MODE)
-24-78:         logger, EventBus
-81-87:         URL_PATTERNS (LAST/NEXT/PREV_OPERATIONS, SEGMENT_MAPPINGS)
-89-148:        SiteDetector (автоопределение сайта)
-151-196:       SegmentMapper (загрузка маппинга с GitHub)
-199-789:       OperationsCollector (динамические URL через SiteDetector)
-792-980:       BetsDetailsFetcher (динамический coupon/info URL)
-984-1083:      SettingsManager
-1085-1088:     LIMITS (UI_UPDATE_INTERVAL_MS)
-1091-1105:     AppState (isInterceptorRunning, isCollectionCompleted, config)
-1112-1119:     getCurrentPageType()
-1122-1338:     XHRInterceptor (LAST/NEXT/PREV_OPERATIONS)
-1341-2596:     UIPanel (кнопка Sync, статус синхронизации, настройки Sync в панели)
-2599-2805:     ExportModule (_buildExportData + exportOperations)
-2809-3374:     GitHubSync (API, merge, sync, setup dialog, changeAlias)
-3377-3454:     init() (SiteDetector.detect(), GitHubSync.init() при старте)
-3457-3549:     earlyInit() + Bootstrap
+24-44:         logger
+46-50:         URL_PATTERNS (LAST/NEXT/PREV_OPERATIONS)
+52-108:        SiteDetector (автоопределение сайта)
+110-646:       OperationsCollector (динамические URL через SiteDetector)
+648-836:       BetsDetailsFetcher (динамический coupon/info URL)
+838-940:       SettingsManager
+942-945:       LIMITS (UI_UPDATE_INTERVAL_MS)
+948-962:       AppState (isInterceptorRunning, isCollectionCompleted, config)
+968-976:       getCurrentPageType()
+978-1195:      XHRInterceptor (LAST/NEXT/PREV_OPERATIONS)
+1197-2447:     UIPanel (кнопка Sync, статус синхронизации, настройки Sync в панели)
+2449-2658:     ExportModule (_buildExportData + exportOperations)
+2660-3224:     GitHubSync (API, merge, sync, setup dialog, changeAlias)
+3226-3304:     init() (SiteDetector.detect(), GitHubSync.init() при старте)
+3306-3390:     earlyInit() + Bootstrap
 ```
 
 ---
@@ -141,10 +140,9 @@ _filterOperations(operations, groups)  // Фильтрация по группа
 _groupByMarker(operations)             // Группировка по marker
 _determineFinalStatus(operations)      // Статус: won/lost/pending/...
 _determineCategory(operations)         // Категория: regular_bet/fast_bet/...
-setActiveGroups(groups)                // Установить фильтр
 getGroupedOperations()                 // Получить сгруппированные данные
 getMarkersForDetails()                 // Получить markers для деталей
-fetchAllBetsDetails()                  // Загрузить детали ставок
+_autoLoadBetsDetails()                 // Автозагрузка деталей с прогресс-баром
 ```
 
 ### BetsDetailsFetcher
@@ -342,7 +340,6 @@ collector.githubSync.showSetupDialog()            // Открыть диалог
 
 - **XHRInterceptor** — перехват operations работает
 - **earlyInit** — критичен для перехвата операций
-- **SegmentMapper** — загрузка и кэширование работают
 - **OperationsCollector** — основной модуль сбора данных
 - **BetsDetailsFetcher** — загрузка деталей с exponential backoff
 
@@ -364,6 +361,19 @@ API на 100% совместимы по формату. Различия тол�
 
 Скрипт определяет `baseApiUrl` динамически из первого перехваченного запроса.
 Параметры `CDI` и `deviceId` автоматически извлекаются из перехваченных запросов и включаются через spread-оператор.
+
+### Единая система ID событий
+
+Fonbet и Pari используют **единый бэкенд**. Все ID из одной системы нумерации:
+
+| ID | Описание | Пример |
+|----|----------|--------|
+| `eventId` | ID конкретного матча | `62203346` (Радукану – Олейникова) |
+| `segmentId` | ID турнира/лиги | `71593` (WTA теннис) |
+| `sportId` | ID вида спорта | `1`=Футбол, `2`=Хоккей, `3`=Баскетбол, `4`=Теннис |
+| `factorId` | ID типа ставки (маркет) | `921`=П1, `924`=П2, `930`=Тотал и т.д. |
+
+**Подтверждено тестированием (2026-02-09):** `segmentId: 71593` присутствует на обоих сайтах — один и тот же турнир WTA. Один и тот же матч на обоих сайтах будет иметь **идентичный `eventId`**. Это позволяет сопоставлять ставки между аккаунтами по eventId.
 
 ---
 
@@ -448,7 +458,17 @@ regId: group.regId || group.details?.header?.regId || group.marker
 
 ## История версий
 
-### v2.1.0 (текущая)
+### v2.1.1 (текущая)
+- Cleanup: удалён мёртвый код (EventBus, SegmentMapper, onCollectionComplete, setActiveGroups, fetchAllBetsDetails, UIPanel.destroy, Notification.requestPermission)
+- Объединены дублированные ветки завершения сбора (data.completed === true)
+- Hardcoded version → VERSION константа
+- Унифицирована валидация alias (убрана кириллица из changeAlias)
+- Удалены redundant typeof OperationsCollector checks
+- Исправлены устаревшие комментарии (v1.14.x, XHR→fetch, help text)
+- Обновлён @author
+- Удалено ~162 строки (3549 → 3387)
+
+### v2.1.0
 - Модуль GitHubSync: инкрементальная синхронизация с приватным GitHub-репозиторием
 - Merge-логика: дедупликация по `marker`, local перезаписывает remote, syncHistory
 - Структура файлов: `{siteId}/{clientId}_{alias}.json`
@@ -484,7 +504,6 @@ regId: group.regId || group.details?.header?.regId || group.marker
 
 ## Внешние зависимости
 
-- **Маппинг сегментов:** `https://raw.githubusercontent.com/ilusiumgame/fonbet-parser/main/segment_mappings.json`
 - **GitHub API:** `https://api.github.com` (для GitHubSync, через GM_xmlhttpRequest)
 
 ---

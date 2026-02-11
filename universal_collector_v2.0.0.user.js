@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Fonbet & Pari Collector
 // @namespace    http://tampermonkey.net/
-// @version      2.1.0
+// @version      2.1.1
 // @description  Сбор истории ставок и операций с fon.bet и pari.ru с синхронизацией в GitHub
-// @author       Your name
+// @author       ilusiumgame
 // @match        https://fon.bet/account/history/operations
 // @match        https://pari.ru/account/history/operations
 // @grant        GM_setValue
@@ -20,7 +20,7 @@
     'use strict';
     // 1. CONSTANTS & CONFIG
 
-    const VERSION = '2.1.0';
+    const VERSION = '2.1.1';
 
     const DEBUG_MODE = false; // Установить в true для отладки
 
@@ -43,48 +43,11 @@
         }
     };
 
-    const EventBus = {
-        events: {},
-
-        /**
-         * Подписаться на событие
-         */
-        on(event, callback) {
-            if (!this.events[event]) {
-                this.events[event] = [];
-            }
-            this.events[event].push(callback);
-        },
-
-        /**
-         * Отписаться от события
-         */
-        off(event, callback) {
-            if (!this.events[event]) return;
-            this.events[event] = this.events[event].filter(cb => cb !== callback);
-        },
-
-        /**
-         * Отправить событие
-         */
-        emit(event, data) {
-            if (!this.events[event]) return;
-            this.events[event].forEach(callback => {
-                try {
-                    callback(data);
-                } catch (error) {
-                    console.error(`[EventBus] Ошибка в обработчике ${event}:`, error);
-                }
-            });
-        }
-    };
-
     // URL паттерны для перехвата
     const URL_PATTERNS = {
         LAST_OPERATIONS: /\/session\/client\/lastOperations$/,
         NEXT_OPERATIONS: /\/session\/client\/nextOperations$/,
-        PREV_OPERATIONS: /\/session\/client\/prevOperations$/,
-        SEGMENT_MAPPINGS: 'https://raw.githubusercontent.com/ilusiumgame/fonbet-parser/main/segment_mappings.json'
+        PREV_OPERATIONS: /\/session\/client\/prevOperations$/
     };
 
     // Site Detector Module
@@ -149,54 +112,6 @@
         }
     };
 
-    // Segment Mapper Module
-    const SegmentMapper = {
-        mappings: {},
-        loaded: false,
-        CACHE_KEY: 'fc_segment_mappings',
-        CACHE_VERSION_KEY: 'fc_segment_mappings_version',
-        CACHE_TTL: 24 * 60 * 60 * 1000, // 24 hours
-
-        async init() {
-            const cached = this._loadFromCache();
-            if (cached) {
-                this.mappings = cached;
-                this.loaded = true;
-                console.log(`[SegmentMapper] Loaded ${Object.keys(this.mappings).length} segments from cache`);
-            }
-            // Fetch fresh data in background
-            this._fetchAndUpdate();
-        },
-
-        _loadFromCache() {
-            try {
-                const version = GM_getValue(this.CACHE_VERSION_KEY, 0);
-                if (Date.now() - version < this.CACHE_TTL) {
-                    const data = GM_getValue(this.CACHE_KEY, null);
-                    return data ? JSON.parse(data) : null;
-                }
-            } catch (e) { console.error('[SegmentMapper] Cache load error:', e); }
-            return null;
-        },
-
-        async _fetchAndUpdate() {
-            try {
-                const response = await fetch(URL_PATTERNS.SEGMENT_MAPPINGS);
-                if (!response.ok) return;
-                const data = await response.json();
-                this.mappings = data;
-                this.loaded = true;
-                GM_setValue(this.CACHE_KEY, JSON.stringify(data));
-                GM_setValue(this.CACHE_VERSION_KEY, Date.now());
-                console.log(`[SegmentMapper] Updated ${Object.keys(data).length} segments from GitHub`);
-            } catch (e) { console.error('[SegmentMapper] Fetch error:', e); }
-        },
-
-        getName(segmentId) {
-            return this.mappings[String(segmentId)] || `Unknown: ${segmentId}`;
-        }
-    };
-
     // Operations Collector Module
     const OperationsCollector = {
         collectedOperations: [],
@@ -213,9 +128,6 @@
 
         // Сгруппированные данные по marker
         groupedByMarker: {},
-
-        // Колбэк при завершении сбора
-        onCollectionComplete: null,
 
         // Флаг автозагрузки деталей
         autoLoadDetails: true,
@@ -436,39 +348,31 @@
                 }
 
                 // Проверяем, есть ли еще данные
-                if (data.completed === true && operations.length > 0) {
-                    this.completed = true;
-                    console.log('🎉 [OperationsCollector] Все операции собраны!');
-                    this.stop();
+                if (data.completed === true) {
+                    // Если это начальный lastOperations и есть операции + параметры для пагинации,
+                    // всегда проверяем prevOperations — страница может использовать малый batch size,
+                    // и completed:true в lastOperations не означает "вся история загружена"
+                    if (isInitial && operations.length > 0 && this.sessionParams && this.lastSaldoId) {
+                        console.log('🔄 [OperationsCollector] Initial lastOperations completed, проверяем prevOperations...');
+                        this._requestNextOperations();
+                    } else {
+                        this.completed = true;
+                        if (operations.length > 0) {
+                            console.log('🎉 [OperationsCollector] Все операции собраны!');
+                        } else {
+                            console.log('✅ [OperationsCollector] Сбор завершен (пустой финальный ответ)');
+                        }
+                        this.stop();
 
-                    // v1.14.0: Автоматический запуск загрузки деталей
-                    if (this.autoLoadDetails) {
-                        this._autoLoadBetsDetails();
-                    }
-
-                    // Вызываем колбэк если задан
-                    if (typeof this.onCollectionComplete === 'function') {
-                        this.onCollectionComplete();
+                        // Автоматический запуск загрузки деталей
+                        if (this.autoLoadDetails) {
+                            this._autoLoadBetsDetails();
+                        }
                     }
                 } else if (data.completed === false && operations.length > 0) {
                     // Автоматически запрашиваем следующую порцию
                     console.log('🔄 [OperationsCollector] Запрос следующей порции...');
                     this._requestNextOperations();
-                } else if (data.completed === true && operations.length === 0) {
-                    // Это последний ответ, но операций в нем нет - все уже получены
-                    console.log('✅ [OperationsCollector] Сбор завершен (пустой финальный ответ)');
-                    this.completed = true;
-                    this.stop();
-
-                    // v1.14.0: Автоматический запуск загрузки деталей
-                    if (this.autoLoadDetails) {
-                        this._autoLoadBetsDetails();
-                    }
-
-                    // Вызываем колбэк если задан
-                    if (typeof this.onCollectionComplete === 'function') {
-                        this.onCollectionComplete();
-                    }
                 } else if (operations.length === 0) {
                     // Пустой ответ без флага completed - игнорируем
                     console.log('⚠️ [OperationsCollector] Получен пустой ответ (не финальный), игнорируем');
@@ -505,7 +409,7 @@
             console.log(`🔄 [OperationsCollector] Запрос prevOperations (saldoId: ${this.lastSaldoId}, transId: ${this.lastTransId})`);
             console.log(`📡 [OperationsCollector] Endpoint: ${endpoint}`);
 
-            // Делаем XHR запрос
+            // Делаем fetch запрос
             fetch(endpoint, {
                 method: 'POST',
                 headers: {
@@ -530,7 +434,7 @@
             const groupValues = Object.values(groups);
 
             return {
-                totalOperations: ops.length,  // Переименовано для консистентности
+                totalOperations: ops.length,
                 totalGroups: groupValues.length,
 
                 // По категориям
@@ -558,12 +462,6 @@
         // Получить сгруппированные операции
         getGroupedOperations() {
             return this.groupedByMarker;
-        },
-
-        // Установить активные группы для фильтрации
-        setActiveGroups(groups) {
-            this.activeGroups = groups;
-            console.log(`⚙️ [OperationsCollector] Активные группы: ${groups.join(', ')}`);
         },
 
         // Фильтрация операций по группам
@@ -700,28 +598,7 @@
             return [...new Set(markers)]; // Уникальные
         },
 
-        // Загрузить детали для всех ставок
-        async fetchAllBetsDetails() {
-            const markers = this.getMarkersForDetails();
-            if (markers.length === 0) {
-                console.log('⚠️ [OperationsCollector] Нет ставок для загрузки деталей');
-                return;
-            }
-
-            console.log(`📥 [OperationsCollector] Загрузка деталей для ${markers.length} ставок...`);
-            const details = await BetsDetailsFetcher.fetchDetails(markers);
-
-            // Привязываем детали к группам по marker
-            Object.values(this.groupedByMarker).forEach(group => {
-                if (group.marker && details.has(group.marker)) {
-                    group.details = details.get(group.marker);
-                }
-            });
-
-            console.log(`✅ [OperationsCollector] Детали загружены`);
-        },
-
-        // v1.14.0: Автоматическая загрузка деталей с прогресс-баром
+        // Автоматическая загрузка деталей с прогресс-баром
         async _autoLoadBetsDetails() {
             const markers = this.getMarkersForDetails();
             if (markers.length === 0) {
@@ -971,11 +848,10 @@
                 errors: this.errors.size,
                 pending: this.queue.length,
                 isProcessing: this.isProcessing,
-                failedMarkers: this.failedMarkers  // v1.14.1: Детальный лог ошибок
+                failedMarkers: this.failedMarkers
             };
         },
 
-        // v1.14.1: Получить список failed markers для анализа
         getFailedMarkers() {
             return this.failedMarkers;
         }
@@ -1216,7 +1092,7 @@
 
             // Патчим send() - добавляем слушатели
             XMLHttpRequest.prototype.send = function(...args) {
-                // Перехват операций (депозиты/выводы)
+                // Перехват операций
                 if (this._fc_url && (URL_PATTERNS.LAST_OPERATIONS.test(this._fc_url) || URL_PATTERNS.NEXT_OPERATIONS.test(this._fc_url) || URL_PATTERNS.PREV_OPERATIONS.test(this._fc_url))) {
                     const isLastOperations = URL_PATTERNS.LAST_OPERATIONS.test(this._fc_url);
                     logger.debug('💰 [XHRInterceptor] Перехвачен запрос операций:', this._fc_url);
@@ -1261,7 +1137,7 @@
             unsafeWindow.fetch = async function(url, options = {}) {
                 const urlString = typeof url === 'string' ? url : url.url;
 
-                // Перехват операций (депозиты/выводы)
+                // Перехват операций
                 if (urlString && (URL_PATTERNS.LAST_OPERATIONS.test(urlString) || URL_PATTERNS.NEXT_OPERATIONS.test(urlString) || URL_PATTERNS.PREV_OPERATIONS.test(urlString))) {
                     const isLastOperations = URL_PATTERNS.LAST_OPERATIONS.test(urlString);
                     logger.debug('💰 [XHRInterceptor/Fetch] Перехвачен запрос операций:', urlString);
@@ -1273,7 +1149,7 @@
                         // Читаем и обрабатываем ответ
                         clone.json().then(data => {
                             // Передаём данные в OperationsCollector
-                            if (typeof OperationsCollector !== 'undefined' && OperationsCollector.isCollecting) {
+                            if (OperationsCollector.isCollecting) {
                                 const requestBody = options.body;
                                 OperationsCollector.handleOperationsResponse(data, isLastOperations, requestBody, urlString);
                             }
@@ -1329,7 +1205,7 @@
                 }
 
                 // Передаём данные в OperationsCollector
-                if (typeof OperationsCollector !== 'undefined' && OperationsCollector.isCollecting) {
+                if (OperationsCollector.isCollecting) {
                     OperationsCollector.handleOperationsResponse(data, isInitial, requestBody, xhr._fc_url);
                 }
 
@@ -1403,28 +1279,6 @@
             this._updateOpsStats();
         },
 
-        /**
-         * Удаление панели
-         */
-        destroy() {
-            console.log('🗑️ [UIPanel] Удаление панели...');
-
-            // Останавливаем автообновление
-            if (this.updateInterval) {
-                clearInterval(this.updateInterval);
-                this.updateInterval = null;
-            }
-
-            // Удаляем панель из DOM
-            if (this.elements.panel) {
-                this.elements.panel.remove();
-            }
-
-            // Очищаем ссылки
-            this.elements = {};
-
-            logger.info('✅ [UIPanel] Панель удалена');
-        },
         // ПРИВАТНЫЕ МЕТОДЫ
 
         /**
@@ -1897,7 +1751,7 @@
                     justify-content: space-between;
                     align-items: center;
                     padding: 20px;
-                    background: rgba(255, 255, 255, 0.05);
+                    background: #1a1a2e;
                     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
                     position: sticky;
                     top: 0;
@@ -1907,6 +1761,7 @@
                 .fc-settings-title {
                     font-size: 18px;
                     font-weight: 600;
+                    color: #ffffff;
                 }
 
                 .fc-settings-close {
@@ -1980,22 +1835,57 @@
                 .fc-settings-checkbox-field {
                     display: flex;
                     align-items: center;
-                    gap: 10px;
+                    gap: 12px;
                     padding: 12px;
                     background: rgba(255, 255, 255, 0.03);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
                     border-radius: 8px;
                     cursor: pointer;
-                    transition: background 0.2s;
+                    transition: all 0.2s;
                 }
 
                 .fc-settings-checkbox-field:hover {
                     background: rgba(255, 255, 255, 0.06);
+                    border-color: rgba(255, 255, 255, 0.15);
+                }
+
+                .fc-settings-checkbox-field.checked {
+                    background: rgba(76, 175, 80, 0.1);
+                    border-color: rgba(76, 175, 80, 0.3);
                 }
 
                 .fc-settings-checkbox {
-                    width: 18px;
-                    height: 18px;
-                    cursor: pointer;
+                    display: none;
+                }
+
+                .fc-toggle {
+                    position: relative;
+                    width: 44px;
+                    min-width: 44px;
+                    height: 24px;
+                    background: rgba(255, 255, 255, 0.15);
+                    border-radius: 12px;
+                    transition: all 0.3s;
+                }
+
+                .fc-toggle::after {
+                    content: '';
+                    position: absolute;
+                    width: 20px;
+                    height: 20px;
+                    background: #ffffff;
+                    border-radius: 50%;
+                    top: 2px;
+                    left: 2px;
+                    transition: all 0.3s;
+                }
+
+                .fc-settings-checkbox:checked + .fc-toggle {
+                    background: #4CAF50;
+                }
+
+                .fc-settings-checkbox:checked + .fc-toggle::after {
+                    left: 22px;
                 }
 
                 .fc-settings-help {
@@ -2008,7 +1898,7 @@
                     display: flex;
                     gap: 12px;
                     padding: 20px;
-                    background: rgba(255, 255, 255, 0.03);
+                    background: #1a1a2e;
                     border-top: 1px solid rgba(255, 255, 255, 0.1);
                     position: sticky;
                     bottom: 0;
@@ -2399,6 +2289,7 @@
                         <div class="fc-settings-field">
                             <label class="fc-settings-checkbox-field">
                                 <input type="checkbox" class="fc-settings-checkbox" id="setting-use-custom-prefix">
+                                <span class="fc-toggle"></span>
                                 <span>Использовать пользовательский префикс файла</span>
                             </label>
                         </div>
@@ -2412,6 +2303,7 @@
                         <div class="fc-settings-field">
                             <label class="fc-settings-checkbox-field">
                                 <input type="checkbox" class="fc-settings-checkbox" id="setting-include-timestamp">
+                                <span class="fc-toggle"></span>
                                 <span>Включать временную метку в имя файла</span>
                             </label>
                         </div>
@@ -2494,6 +2386,13 @@
             document.getElementById('fc-settings-close').addEventListener('click', () => this._closeSettings());
             document.getElementById('fc-settings-save').addEventListener('click', () => this._saveSettings());
             document.getElementById('fc-settings-reset').addEventListener('click', () => this._resetSettings());
+
+            // Toggle-переключатели: обновление класса checked на label
+            panel.querySelectorAll('.fc-settings-checkbox').forEach(cb => {
+                cb.addEventListener('change', () => {
+                    cb.closest('.fc-settings-checkbox-field').classList.toggle('checked', cb.checked);
+                });
+            });
         },
 
         /**
@@ -2501,9 +2400,13 @@
          */
         _fillSettingsForm(settings) {
             // Экспорт
-            document.getElementById('setting-use-custom-prefix').checked = settings.export.useCustomPrefix;
+            const prefixCb = document.getElementById('setting-use-custom-prefix');
+            const timestampCb = document.getElementById('setting-include-timestamp');
+            prefixCb.checked = settings.export.useCustomPrefix;
+            prefixCb.closest('.fc-settings-checkbox-field').classList.toggle('checked', prefixCb.checked);
             document.getElementById('setting-custom-prefix').value = settings.export.customPrefix;
-            document.getElementById('setting-include-timestamp').checked = settings.export.includeTimestamp;
+            timestampCb.checked = settings.export.includeTimestamp;
+            timestampCb.closest('.fc-settings-checkbox-field').classList.toggle('checked', timestampCb.checked);
 
             // Загрузка деталей
             document.getElementById('setting-batch-size').value = settings.fetcher.batchSize;
@@ -2583,14 +2486,15 @@
 1. Откройте страницу /account/history/operations
 2. Нажмите "Start All" для запуска сбора
 3. Дождитесь завершения сбора всех операций
-4. Используйте "Export JSON" для скачивания данных
+4. Используйте "Экспорт данных" для скачивания JSON
+5. Используйте "Sync" для синхронизации с GitHub
 
-ФУНКЦИИ:
-• Автоматический сбор всех операций (ставки, депозиты, выводы, бонусы)
-• Загрузка деталей для обычных ставок
-• Экспорт в JSON формат
+КОНСОЛЬ: window.collector
+• collector.sync() — синхронизация с GitHub
+• collector.changeAlias('name') — сменить alias
+• collector.exportOperations() — экспорт в файл
 
-v${VERSION}: Упрощённый интерфейс, только страница /operations
+v${VERSION}: Мультисайтовая поддержка + GitHub Sync
             `;
 
             alert(helpText);
@@ -2633,7 +2537,7 @@ v${VERSION}: Упрощённый интерфейс, только страни�
             const bonus = groupValues.filter(g => g.category === 'bonus');
 
             return {
-                version: '2.1.0',
+                version: VERSION,
                 exportDate: new Date().toISOString(),
                 site: SiteDetector.getSiteName(),
                 account: {
@@ -2680,11 +2584,6 @@ v${VERSION}: Упрощённый интерфейс, только страни�
          */
         exportOperations() {
             logger.debug('💰 [ExportModule] Начало экспорта операций v2.1...');
-
-            if (!OperationsCollector || !OperationsCollector.getOperations) {
-                alert('❌ Модуль OperationsCollector не доступен!');
-                return;
-            }
 
             const exportData = this._buildExportData();
 
@@ -2906,8 +2805,23 @@ v${VERSION}: Упрощённый интерфейс, только страни�
             const result = await this._apiRequest('GET', `/repos/${this.repoOwner}/${this.repoName}/contents/${path}`);
             if (result.status === 404 || !result.data) return null;
 
-            const content = JSON.parse(atob(result.data.content));
-            return { content, sha: result.data.sha };
+            if (!result.data.content) {
+                console.error('❌ [GitHubSync] Файл не содержит content (возможно, слишком большой)');
+                return null;
+            }
+
+            try {
+                // GitHub API возвращает base64 с переносами строк — убираем их
+                const cleanBase64 = result.data.content.replace(/\s/g, '');
+                // Обратное преобразование к btoa(unescape(encodeURIComponent(...)))
+                const binaryString = atob(cleanBase64);
+                const decodedString = decodeURIComponent(escape(binaryString));
+                const content = JSON.parse(decodedString);
+                return { content, sha: result.data.sha };
+            } catch (e) {
+                console.error('❌ [GitHubSync] Ошибка декодирования файла:', e.message);
+                return null;
+            }
         },
 
         async _putFile(path, content, sha, message) {
@@ -3016,7 +2930,7 @@ v${VERSION}: Упрощённый интерфейс, только страни�
                                     countOps(holdsResult.merged);
 
             const merged = {
-                version: '2.1.0',
+                version: VERSION,
                 account: {
                     siteId: SiteDetector.currentSite?.id,
                     siteName: SiteDetector.getSiteName(),
@@ -3170,8 +3084,8 @@ v${VERSION}: Упрощённый интерфейс, только страни�
 
         // === Изменение alias ===
         async changeAlias(newAlias) {
-            if (!newAlias || !/^[a-zA-Z0-9_а-яА-ЯёЁ]+$/.test(newAlias)) {
-                alert('❌ Невалидный alias. Допустимы: буквы, цифры, подчёркивание.');
+            if (!newAlias || !/^[a-zA-Z0-9_]+$/.test(newAlias)) {
+                alert('❌ Невалидный alias. Допустимы: латиница, цифры, подчёркивание.');
                 return false;
             }
 
@@ -3319,7 +3233,7 @@ v${VERSION}: Упрощённый интерфейс, только страни�
 
             this.saveConfig({ token, repoOwner: owner, repoName: repo, accountAlias: alias });
             this._closeSetupDialog();
-            alert('✅ Настр��йки синхронизации сохранены!');
+            alert('✅ Настройки синхронизации сохранены!');
         },
 
         async _testSetupConnection() {
@@ -3386,16 +3300,10 @@ v${VERSION}: Упрощённый интерфейс, только страни�
         XHRInterceptor.init(AppState);
         UIPanel.init(AppState);
         ExportModule.init(AppState);
-        SegmentMapper.init();
         OperationsCollector.init();
         BetsDetailsFetcher.init();
         SettingsManager.init();
         GitHubSync.init();
-
-        // Запрос разрешения на уведомления
-        if ('Notification' in window && Notification.permission === 'default') {
-            Notification.requestPermission();
-        }
 
         // Создаём UI панель
         UIPanel.create();
@@ -3413,7 +3321,7 @@ v${VERSION}: Упрощённый интерфейс, только страни�
             settingsManager: SettingsManager,
             githubSync: GitHubSync,
             exportOperations: () => ExportModule.exportOperations(),
-            fetchBetsDetails: () => OperationsCollector.fetchAllBetsDetails(),
+            fetchBetsDetails: () => OperationsCollector._autoLoadBetsDetails(),
             sync: () => GitHubSync.sync(),
             changeAlias: (alias) => GitHubSync.changeAlias(alias),
             uiPanel: UIPanel,
@@ -3480,7 +3388,7 @@ v${VERSION}: Упрощённый интерфейс, только страни�
                     const clone = response.clone();
 
                     clone.json().then(data => {
-                        if (typeof OperationsCollector !== 'undefined' && OperationsCollector.isCollecting) {
+                        if (OperationsCollector.isCollecting) {
                             OperationsCollector.handleOperationsResponse(data, isLastOperations, options.body, urlString);
                         } else {
                             if (!window._collectorCachedOperations) window._collectorCachedOperations = [];
@@ -3516,7 +3424,7 @@ v${VERSION}: Упрощённый интерфейс, только страни�
                     try {
                         if (this.status >= 200 && this.status < 300) {
                             const data = JSON.parse(this.responseText);
-                            if (typeof OperationsCollector !== 'undefined' && OperationsCollector.isCollecting) {
+                            if (OperationsCollector.isCollecting) {
                                 OperationsCollector.handleOperationsResponse(data, isLastOperations, this._fc_requestBody, this._fc_url);
                             } else {
                                 if (!window._collectorCachedOperations) window._collectorCachedOperations = [];
