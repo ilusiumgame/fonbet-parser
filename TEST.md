@@ -1,4 +1,4 @@
-﻿# TEST: Fonbet & Pari Collector v2.1.0
+﻿# TEST: Fonbet & Pari Collector v2.1.1
 
 Полный план тестирования скрипта. Все тесты выполняются через MCP devtools.
 
@@ -28,12 +28,12 @@
 () => {
     return {
         version: collector.version,
-        passed: collector.version === '2.1.0'
+        passed: collector.version === '2.1.1'
     };
 }
 ```
 
-**Критерий успеха:** `version === '2.1.0'`
+**Критерий успеха:** `version === '2.1.1'`
 
 ---
 
@@ -279,7 +279,6 @@
         hasGetOperations: typeof collector.getOperations === 'function',
         hasGetGroupedOperations: typeof collector.getGroupedOperations === 'function',
         hasGetMarkersForDetails: typeof collector.getMarkersForDetails === 'function',
-        hasFetchAllBetsDetails: typeof collector.fetchAllBetsDetails === 'function',
         hasHandleOperationsResponse: typeof collector.handleOperationsResponse === 'function',
         passed: true
     };
@@ -857,7 +856,7 @@
             'detailsLoaded' in exportStructure.summary &&
             'detailsFailed' in exportStructure.summary &&
             'detailsSkipped' in exportStructure.summary,
-        passed: exportStructure.version === '2.1.0'
+        passed: exportStructure.version === '2.1.1'
     };
 }
 ```
@@ -1567,7 +1566,7 @@ async () => {
 
 ```javascript
 // 1. Версия
-() => ({ version: collector.version, passed: collector.version === '2.1.0' })
+() => ({ version: collector.version, passed: collector.version === '2.1.1' })
 
 // 2. Типы операций
 () => ({ count: Object.keys(collector.operationsCollector.OPERATION_TYPES).length, passed: Object.keys(collector.operationsCollector.OPERATION_TYPES).length === 19 })
@@ -1797,3 +1796,11 @@ async () => {
 | 12.1-12.3 | Новые: Merge логика (_mergeArray, _mergeData) |
 | 13.1-13.4 | Новые: UI интеграция Sync (кнопка, статус, настройки) |
 | 14.1-14.5 | Новые: Интеграционные тесты синхронизации (sync, changeAlias, безопасность) |
+
+### Изменения в тестах для v2.1.1:
+
+| Тест | Изменение |
+|------|-----------|
+| 1.1 | Версия: `2.1.0` → `2.1.1` |
+| 3.1 | Убрана проверка `hasFetchAllBetsDetails` (метод удалён) |
+| 8.1 | Версия экспорта: `2.1.0` → `2.1.1` |

@@ -1,4 +1,4 @@
-# TODO: Fonbet & Pari Collector v2.1.0
+# TODO: Fonbet & Pari Collector v2.1.1
 
 Мультисайтовый сбор данных с fon.bet и pari.ru на странице `/operations`.
 
@@ -407,7 +407,7 @@ await fetch(SiteDetector.getCouponInfoUrl(), {
 
 ## Фаза 9: GitHub Sync ✅ ВЫПОЛНЕНО (v2.1.0)
 
-Модуль инкрементальной синхронизации данных с GitHub. Подробный план — `TODO_v2.1_SYNC.md`.
+Модуль инкрементальной синхронизации данных с GitHub.
 
 ### Реализовано:
 - [x] Модуль GitHubSync (~560 строк): API, merge, sync, setup dialog, changeAlias

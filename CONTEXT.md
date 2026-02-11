@@ -2,7 +2,7 @@
 
 Tampermonkey скрипт для сбора истории операций с fon.bet и pari.ru. Работает на странице `/account/history/operations` обоих сайтов. Автоопределение сайта, перехват XHR/fetch, сбор операций через API, группировка по marker, автоматическая загрузка деталей ставок, экспорт в JSON v2.1, инкрементальная синхронизация с GitHub.
 
-**Версия:** v2.1.1 — Cleanup: удаление мёртвого кода, исправление inconsistencies
+**Версия:** v2.1.1 — Cleanup, UI-фиксы, исправления пагинации и синхронизации
 
 ---
 
@@ -10,7 +10,7 @@ Tampermonkey скрипт для сбора истории операций с f
 
 ```
 Файл:    universal_collector_v2.0.0.user.js
-Строки:  ~3387
+Строки:  ~3459
 Версия:  2.1.1
 ```
 
@@ -21,22 +21,22 @@ Tampermonkey скрипт для сбора истории операций с f
 ```
 1-15:          Tampermonkey Metadata (@run-at document-start, @match fon.bet + pari.ru,
                @grant GM_xmlhttpRequest, @connect api.github.com)
-17-21:         Constants (VERSION, DEBUG_MODE)
-24-44:         logger
-46-50:         URL_PATTERNS (LAST/NEXT/PREV_OPERATIONS)
-52-108:        SiteDetector (автоопределение сайта)
-110-646:       OperationsCollector (динамические URL через SiteDetector)
-648-836:       BetsDetailsFetcher (динамический coupon/info URL)
-838-940:       SettingsManager
-942-945:       LIMITS (UI_UPDATE_INTERVAL_MS)
-948-962:       AppState (isInterceptorRunning, isCollectionCompleted, config)
-968-976:       getCurrentPageType()
-978-1195:      XHRInterceptor (LAST/NEXT/PREV_OPERATIONS)
-1197-2447:     UIPanel (кнопка Sync, статус синхронизации, настройки Sync в панели)
-2449-2658:     ExportModule (_buildExportData + exportOperations)
-2660-3224:     GitHubSync (API, merge, sync, setup dialog, changeAlias)
-3226-3304:     init() (SiteDetector.detect(), GitHubSync.init() при старте)
-3306-3390:     earlyInit() + Bootstrap
+23:            Constants (VERSION, DEBUG_MODE)
+28-45:         logger
+47-52:         URL_PATTERNS (LAST/NEXT/PREV_OPERATIONS)
+54-115:        SiteDetector (автоопределение сайта)
+116-670:       OperationsCollector (динамические URL через SiteDetector)
+671-861:       BetsDetailsFetcher (динамический coupon/info URL)
+862-962:       SettingsManager
+963-967:       LIMITS (UI_UPDATE_INTERVAL_MS)
+969-988:       AppState (isInterceptorRunning, isCollectionCompleted, config)
+990-998:       getCurrentPageType()
+1000-1218:     XHRInterceptor (LAST/NEXT/PREV_OPERATIONS)
+1219-2504:     UIPanel (кнопка Sync, статус, toggle-переключатели, настройки Sync)
+2505-2709:     ExportModule (_buildExportData + exportOperations)
+2710-3292:     GitHubSync (API, merge, sync, setup dialog, changeAlias)
+3293-3366:     init() (SiteDetector.detect(), GitHubSync.init() при старте)
+3367-3459:     earlyInit() + Bootstrap
 ```
 
 ---
@@ -244,7 +244,7 @@ const UIPanel = {
 
 ```javascript
 {
-    "version": "2.1.0",
+    "version": "2.1.1",
     "site": "Fonbet",
     "exportDate": "...",
     "account": {
@@ -275,7 +275,7 @@ const UIPanel = {
 
 ```javascript
 {
-    "version": "2.1.0",
+    "version": "2.1.1",
     "account": { siteId, siteName, clientId, alias },
     "lastSync": "2026-02-08T14:30:00.000Z",
     "syncHistory": [
@@ -465,8 +465,12 @@ regId: group.regId || group.details?.header?.regId || group.marker
 - Унифицирована валидация alias (убрана кириллица из changeAlias)
 - Удалены redundant typeof OperationsCollector checks
 - Исправлены устаревшие комментарии (v1.14.x, XHR→fetch, help text)
+- UI: solid фон header/footer настроек, цвет заголовка, toggle-переключатели вместо чекбоксов
+- Исправлена пагинация: initial lastOperations с completed:true теперь проверяет prevOperations
+- Исправлен sync: _getFile() корректно декодирует base64 с UTF-8 (Cyrillic)
+- Исправлена кодировка Unicode в alert GitHubSync
 - Обновлён @author
-- Удалено ~162 строки (3549 → 3387)
+- Итого: 3549 → ~3459 строк
 
 ### v2.1.0
 - Модуль GitHubSync: инкрементальная синхронизация с приватным GitHub-репозиторием
@@ -513,7 +517,6 @@ regId: group.regId || group.details?.header?.regId || group.marker
 - `CONTEXT.md` — общий контекст проекта (этот файл)
 - `TODO.md` — план разработки и история фаз
 - `TEST.md` — документация по тестированию
-- `TODO_v2.1_SYNC.md` — план модуля GitHubSync (v2.1.0)
 - `OCTO_SETUP.md` — настройка Octo Browser + Chrome DevTools MCP
 
 ---
