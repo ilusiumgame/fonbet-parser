@@ -1,6 +1,6 @@
-# TODO: Fonbet & Pari Collector v2.1.1
+# TODO: Fonbet & Pari Collector v2.2.2
 
-Мультисайтовый сбор данных с fon.bet и pari.ru на странице `/operations`.
+Мультисайтовый сбор данных с fon.bet и pari.ru. Страницы: `/operations` (история операций), `/bonuses` (фрибеты).
 
 ---
 
@@ -28,6 +28,8 @@
 | Фаза 13 | ✅ ВЫПОЛНЕНО | Фикс: Git Blob API для файлов > 1MB в sync |
 | Фаза 14 | ✅ ВЫПОЛНЕНО | SegmentMapper: подстановка названий лиг по segmentId |
 | Фаза 15 | ✅ ВЫПОЛНЕНО | Баг-фиксы: повторный старт, "готово к sync", UI настроек |
+| Фаза 16 | ✅ ВЫПОЛНЕНО | FreebetCollector: сбор фрибетов с /bonuses (v2.2.0) |
+| Фаза 16.1 | ✅ ВЫПОЛНЕНО | Баг-фиксы FreebetCollector (v2.2.1–v2.2.2) |
 
 ---
 
@@ -174,3 +176,36 @@ Body: {"regId": <marker>, "lang": "ru", "betTypeName": "sport", "fsid": "...", .
 ### 15.3. UI: кнопки настроек экспорта не видны
 - [x] **Причина:** `.fc-settings-checkbox-field` не имел явного `color`, текст наследовал чёрный цвет от страницы
 - [x] **Исправление:** добавлен `color: rgba(255, 255, 255, 0.9)` для светлого текста на тёмном фоне
+
+---
+
+## Фаза 16: FreebetCollector ✅ ВЫПОЛНЕНО (v2.2.0)
+
+### Реализовано:
+- [x] Модуль FreebetCollector (~130 строк): сбор фрибетов на странице `/bonuses`
+- [x] Автозагрузка фрибетов через API `POST /client/getFreebets` при инициализации
+- [x] Чтение sessionParams из `unsafeWindow.localStorage` (ключи: `red.fsid`, `red.clientId`, `red.deviceID`, `red.lastSysId`)
+- [x] UI панель Freebets Collector: кол-во активных фрибетов, сумма, кнопка «Обновить», кнопка «Sync Freebets»
+- [x] Защита от дублирования панели (`document.getElementById` guard в `UIPanel.create()`)
+- [x] Защита от повторной инициализации (`unsafeWindow._fcInitialized` guard в `init()`)
+- [x] Удалён перехват getFreebets из earlyInit (fetch + XHR блоки, ~66 строк)
+- [x] Удалён `GET_FREEBETS` из `URL_PATTERNS`
+- [x] `@match` добавлены: `https://fon.bet/bonuses`, `https://pari.ru/bonuses`
+
+### Ключевые решения:
+- **Отказ от earlyInit interception:** страница кеширует ссылку на `fetch` до того, как Tampermonkey патчит — перехват `getFreebets` не работал
+- **localStorage вместо request body:** sessionParams читаются из `unsafeWindow.localStorage` (sandbox Tampermonkey требует `unsafeWindow`)
+- **CDI не нужен:** API `getFreebets` работает без параметра CDI
+- **Tampermonkey auto-update:** скрипт обновляется через GitHub push + version bump → Tampermonkey подтягивает автоматически
+
+---
+
+## Фаза 16.1: Баг-фиксы FreebetCollector ✅ ВЫПОЛНЕНО (v2.2.1–v2.2.2)
+
+### v2.2.1:
+- [x] **Фикс: crash showProgress на /bonuses** — `progressDetails` не существует на bonuses-панели, добавлен null-check
+- [x] **Фикс: вечное "Ожидание сбора данных..." на /bonuses** — `getSyncStatus()` теперь проверяет `FreebetCollector.isLoaded` вместо `AppState.isCollectionCompleted`
+- [x] **Фикс: lastSyncResult для freebets** — отображает "N фрибетов" вместо "+undefined"
+
+### v2.2.2:
+- [x] **Визуальная обратная связь кнопки «Обновить»** — показывает "⏳ Загрузка...", затем "✅ Обновлено!" / "❌ Ошибка" (1.5 сек), кнопка disabled во время запроса

@@ -1,4 +1,4 @@
-﻿# TEST: Fonbet & Pari Collector v2.1.1
+# TEST: Fonbet & Pari Collector v2.2.2
 
 Полный план тестирования скрипта. Все тесты выполняются через MCP devtools.
 
@@ -13,8 +13,10 @@
 - MCP devtools подключён к порту 9222
 
 ### Тестовая страница
-- **Fonbet:** `https://fon.bet/account/history/operations`
-- **Pari:** `https://pari.ru/account/history/operations`
+- **Fonbet (операции):** `https://fon.bet/account/history/operations`
+- **Fonbet (фрибеты):** `https://fon.bet/bonuses`
+- **Pari (операции):** `https://pari.ru/account/history/operations`
+- **Pari (фрибеты):** `https://pari.ru/bonuses`
 
 ---
 
@@ -28,12 +30,12 @@
 () => {
     return {
         version: collector.version,
-        passed: collector.version === '2.1.1'
+        passed: collector.version === '2.2.2'
     };
 }
 ```
 
-**Критерий успеха:** `version === '2.1.1'`
+**Критерий успеха:** `version === '2.2.2'`
 
 ---
 
@@ -59,6 +61,7 @@
         hasGitHubSync: !!fc.githubSync,
         hasSync: typeof fc.sync === 'function',
         hasChangeAlias: typeof fc.changeAlias === 'function',
+        hasFreebetCollector: !!fc.freebetCollector,
         passed: true
     };
 }
@@ -171,27 +174,25 @@
     const patterns = collector.URL_PATTERNS;
     const testUrls = {
         lastOps: 'https://clientsapi-lb51-w.bk6bba-resources.com/session/client/lastOperations',
-        nextOps: 'https://clientsapi-lb51-w.bk6bba-resources.com/session/client/prevOperations',
         prevOps: 'https://clientsapi-lb01-w.pb06e2-resources.com/session/client/prevOperations',
         pariLastOps: 'https://clientsapi-lb01-w.pb06e2-resources.com/session/client/lastOperations'
     };
     return {
         hasLAST_OPERATIONS: !!patterns.LAST_OPERATIONS,
-        hasNEXT_OPERATIONS: !!patterns.NEXT_OPERATIONS,
         hasPREV_OPERATIONS: !!patterns.PREV_OPERATIONS,
+        patternCount: Object.keys(patterns).length,
         matchesLastOps: patterns.LAST_OPERATIONS.test(testUrls.lastOps),
-        matchesNextOps: patterns.NEXT_OPERATIONS.test(testUrls.nextOps),
         matchesPrevOps: patterns.PREV_OPERATIONS.test(testUrls.prevOps),
         matchesPariLastOps: patterns.LAST_OPERATIONS.test(testUrls.pariLastOps),
-        passed: patterns.LAST_OPERATIONS.test(testUrls.lastOps) &&
-                patterns.NEXT_OPERATIONS.test(testUrls.nextOps) &&
+        passed: Object.keys(patterns).length === 2 &&
+                patterns.LAST_OPERATIONS.test(testUrls.lastOps) &&
                 patterns.PREV_OPERATIONS.test(testUrls.prevOps) &&
                 patterns.LAST_OPERATIONS.test(testUrls.pariLastOps)
     };
 }
 ```
 
-**Критерий успеха:** Паттерны корректно матчат URL обоих сайтов
+**Критерий успеха:** 2 паттерна (LAST/PREV_OPERATIONS), корректно матчат URL обоих сайтов
 
 ---
 
@@ -880,7 +881,7 @@
             'detailsLoaded' in exportStructure.summary &&
             'detailsFailed' in exportStructure.summary &&
             'detailsSkipped' in exportStructure.summary,
-        passed: exportStructure.version === '2.1.1'
+        passed: exportStructure.version === '2.2.2'
     };
 }
 ```
@@ -1627,13 +1628,125 @@ async () => {
 
 ---
 
+## Категория 15: FreebetCollector (страница /bonuses)
+
+### 15.1. Проверка модуля FreebetCollector
+**ID:** `TEST_15_1`
+**Тип:** Автоматический (на странице /bonuses)
+
+```javascript
+() => {
+    const fc = collector.freebetCollector;
+    return {
+        exists: !!fc,
+        hasInit: typeof fc.init === 'function',
+        hasFetchFreebets: typeof fc.fetchFreebets === 'function',
+        hasHandleResponse: typeof fc.handleResponse === 'function',
+        hasGetStats: typeof fc.getStats === 'function',
+        hasGetActiveFreebets: typeof fc.getActiveFreebets === 'function',
+        hasSyncFreebets: typeof fc.syncFreebets === 'function',
+        hasLoadSessionParams: typeof fc._loadSessionParamsFromStorage === 'function',
+        passed: !!fc && typeof fc.fetchFreebets === 'function'
+    };
+}
+```
+
+**Критерий успеха:** Все методы FreebetCollector существуют
+
+---
+
+### 15.2. Проверка загрузки sessionParams из localStorage
+**ID:** `TEST_15_2`
+**Тип:** Автоматический (на странице /bonuses)
+
+```javascript
+() => {
+    const fc = collector.freebetCollector;
+    const sp = fc.sessionParams;
+    return {
+        hasSessionParams: !!sp,
+        hasFsid: typeof sp?.fsid === 'string',
+        hasClientId: typeof sp?.clientId === 'number',
+        hasDeviceId: sp?.deviceId !== undefined,
+        hasSysId: sp?.sysId !== undefined,
+        sessionParams: sp,
+        passed: !!sp && !!sp.fsid && typeof sp.clientId === 'number'
+    };
+}
+```
+
+**Критерий успеха:** sessionParams загружены из localStorage, fsid и clientId присутствуют
+
+---
+
+### 15.3. Проверка загрузки фрибетов
+**ID:** `TEST_15_3`
+**Тип:** Автоматический (на странице /bonuses, после init)
+
+```javascript
+() => {
+    const fc = collector.freebetCollector;
+    return {
+        isLoaded: fc.isLoaded,
+        freebetsCount: fc.freebets?.length,
+        activeCount: fc.getActiveFreebets()?.length,
+        stats: fc.getStats(),
+        passed: fc.isLoaded && fc.freebets?.length >= 0
+    };
+}
+```
+
+**Критерий успеха:** `isLoaded === true`, фрибеты загружены
+
+---
+
+### 15.4. Проверка UI панели на /bonuses
+**ID:** `TEST_15_4`
+**Тип:** Автоматический (на странице /bonuses)
+
+```javascript
+() => {
+    const panel = document.getElementById('fonbet-collector-panel');
+    const panelCount = document.querySelectorAll('#fonbet-collector-panel').length;
+    return {
+        panelExists: !!panel,
+        panelCount: panelCount,
+        noDuplicates: panelCount === 1,
+        passed: !!panel && panelCount === 1
+    };
+}
+```
+
+**Критерий успеха:** Одна панель (без дубликатов)
+
+---
+
+### 15.5. Проверка защиты от дублирования init
+**ID:** `TEST_15_5`
+**Тип:** Автоматический
+
+```javascript
+() => {
+    const gw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    return {
+        _fcInitialized: gw._fcInitialized,
+        panelCount: document.querySelectorAll('#fonbet-collector-panel').length,
+        passed: gw._fcInitialized === true
+    };
+}
+```
+
+**Критерий успеха:** `_fcInitialized === true`, одна панель
+
+---
+
 ## Быстрый чеклист (Quick Test Suite)
 
 Последовательность команд для быстрой проверки:
 
 ```javascript
 // 1. Версия
-() => ({ version: collector.version, passed: collector.version === '2.1.1' })
+() => ({ version: collector.version, passed: collector.version === '2.2.2' })
 
 // 2. Типы операций
 () => ({ count: Object.keys(collector.operationsCollector.OPERATION_TYPES).length, passed: Object.keys(collector.operationsCollector.OPERATION_TYPES).length === 19 })
@@ -1670,22 +1783,25 @@ async () => {
 
 // 13. SegmentMapper
 () => ({ loaded: collector.segmentMapper.loaded, count: Object.keys(collector.segmentMapper.mappings).length, sample: collector.segmentMapper.getName('11916'), passed: collector.segmentMapper.loaded })
+
+// 14. FreebetCollector (на /bonuses)
+() => ({ exists: !!collector.freebetCollector, isLoaded: collector.freebetCollector?.isLoaded, stats: collector.freebetCollector?.getStats(), sessionParams: !!collector.freebetCollector?.sessionParams, passed: !!collector.freebetCollector })
 ```
 
 ---
 
 ## Результаты тестирования
 
-### Fonbet (fon.bet) — v2.1.1 (2026-02-11)
+### Fonbet (fon.bet) — v2.2.2 (2026-02-11)
 
 | ID | Тест | Статус | Примечания |
 |----|------|--------|------------|
-| 1.1 | Загрузка скрипта | ✅ | version === '2.1.1' |
-| 1.2 | Глобальный объект | ✅ | Все модули + githubSync, sync, changeAlias, segmentMapper |
+| 1.1 | Загрузка скрипта | ✅ | version === '2.2.2' |
+| 1.2 | Глобальный объект | ✅ | Все модули + freebetCollector, githubSync, segmentMapper |
 | 1.3 | OPERATION_TYPES (19 типов) | ✅ | По спецификации |
 | 1.4 | OPERATION_GROUPS | ✅ | ALL.length === 19 |
 | 1.5 | BetsDetailsFetcher конфигурация | ✅ | Параметры верны |
-| 1.6 | URL_PATTERNS | ✅ | Паттерны работают |
+| 1.6 | URL_PATTERNS | ✅ | 2 паттерна: LAST/PREV_OPERATIONS |
 | 1.7 | AppState структура | ✅ | Структура корректна |
 | 1.8 | SegmentMapper | ✅ | loaded: true, 3049 сегментов, getName() работает |
 | 2.1 | XHRInterceptor модуль | ✅ | XHR + Fetch пропатчены |
@@ -1731,6 +1847,11 @@ async () => {
 | 14.3 | Повторная синхронизация | ✅ | Повторный sync успешен |
 | 14.4 | changeAlias | ✅ | Файл переименован |
 | 14.5 | Безопасность токена | ✅ | Токен не утекает |
+| 15.1 | FreebetCollector модуль | ✅ | Все методы существуют |
+| 15.2 | sessionParams из localStorage | ✅ | fsid + clientId загружены |
+| 15.3 | Загрузка фрибетов | ✅ | 1 активный фрибет, 623 ₽ |
+| 15.4 | UI панель на /bonuses | ✅ | Одна панель, без дубликатов |
+| 15.5 | Защита от дублирования | ✅ | _fcInitialized === true |
 
 ### Pari (pari.ru) — v2.0.0 (2026-02-08)
 
@@ -1772,13 +1893,13 @@ async () => {
 
 ## Итоговый отчёт тестирования
 
-### Fonbet (2026-02-11, v2.1.1)
+### Fonbet (2026-02-11, v2.2.2)
 
 **Тестировщик:** Claude Code + MCP chrome-devtools
 **Тестовый аккаунт:** fon.bet (Макаренко Давид Андреевич)
 
 **Результаты:**
-- Пройдено: 50 тестов
+- Пройдено: 55 тестов
 - Пропущено: 0 тестов
 - С замечаниями: 0 тестов
 - Провалено: 0 тестов
@@ -1787,7 +1908,7 @@ async () => {
 
 ```json
 {
-  "version": "2.1.1",
+  "version": "2.2.2",
   "site": "Fonbet",
   "summary": {
     "totalOperations": 8290,
@@ -1807,6 +1928,11 @@ async () => {
     "mappingsCount": 3049,
     "segmentsResolved": 2457,
     "unresolvedUniqueSegmentIds": 107
+  },
+  "freebetCollector": {
+    "activeFreebets": 1,
+    "totalAmount": 623,
+    "sessionParamsSource": "unsafeWindow.localStorage"
   }
 }
 ```
@@ -1845,7 +1971,7 @@ async () => {
 
 ### Выводы:
 
-1. v2.1.1 успешно работает на fon.bet — полное регрессионное тестирование пройдено
+1. v2.2.2 успешно работает на fon.bet — полное регрессионное тестирование пройдено
 2. GitHubSync: синхронизация, merge, changeAlias — всё работает корректно
 3. 100% детализация ставок (3864/3864)
 4. 0 ошибок загрузки деталей, 0 дубликатов
@@ -1853,8 +1979,9 @@ async () => {
 6. Токен не утекает через глобальный объект
 7. SegmentMapper: 3049 сегментов загружено, 60% разрешение (2457/4099)
 8. Полная пагинация: 8290 операций (фикс nextOperations работает)
-9. Все 50 тестов пройдены, 0 провалено
-10. Тестирование pari.ru для v2.1.1 ещё не проведено
+9. FreebetCollector: sessionParams из localStorage, 1 активный фрибет (623 ₽), панель без дубликатов
+10. Все 55 тестов пройдены, 0 провалено
+11. Тестирование pari.ru для v2.2.2 ещё не проведено
 
 **Общая оценка: УСПЕШНО ПРОЙДЕНО**
 
@@ -1893,4 +2020,22 @@ async () => {
 | 1.8 | Новый: проверка SegmentMapper (загрузка, getName) |
 | 8.4 | Новый: проверка поля `segments` в экспорте |
 | Quick #13 | Новый: SegmentMapper в быстром чеклисте |
+
+### Изменения в тестах для v2.2.0 (Фаза 16):
+
+| Тест | Изменение |
+|------|-----------|
+| 1.1 | Версия: `2.1.1` → `2.2.0` |
+| 1.2 | Добавлена проверка: `hasFreebetCollector` |
+| 1.6 | Удалены `NEXT_OPERATIONS`/`GET_FREEBETS` (2 паттерна вместо 3) |
+| 8.1 | Версия экспорта: `2.1.1` → `2.2.0` |
+| 15.1-15.5 | Новые: FreebetCollector (модуль, sessionParams, загрузка, UI, дублирование) |
+| Quick #14 | Новый: FreebetCollector в быстром чеклисте |
+
+### Изменения в тестах для v2.2.1–v2.2.2 (Фаза 16.1):
+
+| Тест | Изменение |
+|------|-----------|
+| 1.1 | Версия: `2.2.0` → `2.2.2` |
+| 8.1 | Версия экспорта: `2.2.0` → `2.2.2` |
 

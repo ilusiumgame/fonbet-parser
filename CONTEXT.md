@@ -1,8 +1,8 @@
 # Fonbet & Pari Collector
 
-Tampermonkey скрипт для сбора истории операций с fon.bet и pari.ru. Работает на странице `/account/history/operations` обоих сайтов. Автоопределение сайта, перехват XHR/fetch, сбор операций через API, группировка по marker, автоматическая загрузка деталей ставок, экспорт в JSON v2.1, инкрементальная синхронизация с GitHub.
+Tampermonkey скрипт для сбора истории операций с fon.bet и pari.ru. Работает на странице `/account/history/operations` (сбор ставок) и `/bonuses` (сбор фрибетов) обоих сайтов. Автоопределение сайта, перехват XHR/fetch, сбор операций через API, группировка по marker, автоматическая загрузка деталей ставок, экспорт в JSON v2.1, инкрементальная синхронизация с GitHub, сбор фрибетов.
 
-**Версия:** v2.1.1 — Cleanup, UI-фиксы, SegmentMapper, исправления пагинации, синхронизации и nextOperations
+**Версия:** v2.2.2 — FreebetCollector, сбор фрибетов с /bonuses, баг-фиксы sync/UI
 
 ---
 
@@ -10,34 +10,37 @@ Tampermonkey скрипт для сбора истории операций с f
 
 ```
 Файл:    universal_collector.user.js
-Строки:  ~3520
-Версия:  2.1.1
+Строки:  ~3941
+Версия:  2.2.2
 ```
 
 ---
 
-## Структура кода (v2.1.1)
+## Структура кода (v2.2.2)
 
 ```
-1-16:          Tampermonkey Metadata (@run-at document-start, @match fon.bet + pari.ru,
-               @grant GM_xmlhttpRequest, @connect api.github.com + raw.githubusercontent.com)
-23:            Constants (VERSION, DEBUG_MODE)
-28-45:         logger
-47-50:         URL_PATTERNS (LAST/PREV_OPERATIONS)
-54-113:        SiteDetector (автоопределение сайта)
-114-163:       SegmentMapper (загрузка segment_mappings.json из GitHub Raw)
-164-720:       OperationsCollector (динамические URL через SiteDetector)
-721-911:       BetsDetailsFetcher (динамический coupon/info URL)
-912-1012:      SettingsManager
-1013-1017:     LIMITS (UI_UPDATE_INTERVAL_MS)
-1019-1038:     AppState (isInterceptorRunning, isCollectionCompleted, config)
-1040-1048:     getCurrentPageType()
-1050-1268:     XHRInterceptor (LAST/PREV_OPERATIONS)
-1269-2554:     UIPanel (кнопка Sync, статус, toggle-переключатели, настройки Sync)
-2555-2759:     ExportModule (_buildExportData + exportOperations, segments в _formatBetGroup)
-2760-3355:     GitHubSync (API, merge, sync, setup dialog, changeAlias)
-3356-3430:     init() (SiteDetector.detect(), SegmentMapper.init(), GitHubSync.init() при старте)
-3431-3523:     earlyInit() + Bootstrap
+1-20:          Tampermonkey Metadata (@run-at document-start, @match fon.bet + pari.ru
+               /operations + /bonuses, @grant GM_xmlhttpRequest, @connect api.github.com +
+               raw.githubusercontent.com)
+26:            Constants (VERSION, DEBUG_MODE)
+30-48:         logger
+50-53:         URL_PATTERNS (LAST/PREV_OPERATIONS)
+56-115:        SiteDetector (автоопределение сайта)
+118-162:       SegmentMapper (загрузка segment_mappings.json из GitHub Raw)
+165-293:       FreebetCollector (sessionParams из localStorage, auto-fetch, UI на /bonuses)
+296-848:       OperationsCollector (динамические URL через SiteDetector)
+851-1038:      BetsDetailsFetcher (динамический coupon/info URL)
+1042-1141:     SettingsManager
+1143-1146:     LIMITS (UI_UPDATE_INTERVAL_MS)
+1149-1163:     AppState (isInterceptorRunning, isCollectionCompleted, config)
+1170-1179:     getCurrentPageType()
+1183-1399:     XHRInterceptor (LAST/PREV_OPERATIONS)
+1402-2806:     UIPanel (Freebets Collector панель на /bonuses, кнопка Sync, toggle, настройки)
+2809-3015:     ExportModule (_buildExportData + exportOperations, segments в _formatBetGroup)
+3019-3704:     GitHubSync (API, merge, sync, setup dialog, changeAlias)
+3708-3821:     init() (_initCalled + _fcInitialized guards, FreebetCollector.init() на /bonuses)
+3824-3904:     earlyInit() (XHR/fetch патч для operations)
+3906-3916:     Bootstrap
 ```
 
 ---
@@ -134,6 +137,25 @@ marker: 12345678905
 ---
 
 ## Ключевые модули
+
+### FreebetCollector (v2.2.0)
+```javascript
+const FreebetCollector = {
+    freebets: [],
+    sessionParams: null,
+    isLoaded: false,
+
+    init(),                              // Читает sessionParams из localStorage, auto-fetch
+    _loadSessionParamsFromStorage(),     // unsafeWindow.localStorage → sessionParams
+    handleResponse(data),               // Обработка ответа getFreebets
+    getActiveFreebets(),                // Фильтр: state === 'active'
+    getStats(),                         // Статистика: active, total, totalAmount
+    fetchFreebets(),                    // POST /client/getFreebets
+    syncFreebets()                      // Синхронизация фрибетов в GitHub (overwrite)
+};
+// sessionParams: { fsid, clientId, deviceId, sysId }
+// Ключи localStorage: red.fsid, red.clientId, red.deviceID, red.lastSysId
+```
 
 ### SegmentMapper
 ```javascript
@@ -236,15 +258,13 @@ const GitHubSync = {
 ```javascript
 const UIPanel = {
     init(appState),
-    create(),
+    create(),                        // С guard от дублирования (#fonbet-collector-panel)
     update(),
 
-    // Элементы: Start/Stop, Export Operations, Sync
+    // На /operations: Start/Stop, Export Operations, Sync, статистика, прогресс-бар
+    // На /bonuses: Freebets Collector — активных/сумма, кнопки «Обновить» и «Sync Freebets»
     // Заголовок: "{SiteName} Collector v{VERSION}"
-    // Статистика: Операций собрано
-    // Операции: Ставки, Быстрые, Фрибеты, Депозиты, Выводы, Бонусы
-    // Sync: кнопка 🔄 Sync + индикатор статуса
-    // Прогресс-бар загрузки деталей / синхронизации
+    // Защита от дублирования: unsafeWindow._fcInitialized + DOM check
     // Панель настроек: Export, Fetcher, Sync (Token/Owner/Repo/Alias)
 };
 ```
@@ -255,7 +275,7 @@ const UIPanel = {
 
 ```javascript
 {
-    "version": "2.1.1",
+    "version": "2.2.2",
     "site": "Fonbet",
     "exportDate": "...",
     "account": {
@@ -308,7 +328,7 @@ const UIPanel = {
 
 ```javascript
 {
-    "version": "2.1.1",
+    "version": "2.2.2",
     "account": { siteId, siteName, clientId, alias },
     "lastSync": "2026-02-08T14:30:00.000Z",
     "syncHistory": [
@@ -361,6 +381,16 @@ collector.segmentMapper.loaded                    // Загружены ли м�
 collector.segmentMapper.getName(segmentId)        // Получить название по ID
 ```
 
+### Фрибеты (страница /bonuses, v2.2.0)
+```javascript
+collector.freebetCollector.isLoaded               // Загружены ли фрибеты
+collector.freebetCollector.getStats()             // Статистика: active, total, totalAmount
+collector.freebetCollector.getActiveFreebets()    // Список активных фрибетов
+collector.freebetCollector.fetchFreebets()        // Перезагрузить фрибеты
+collector.freebetCollector.syncFreebets()         // Синхронизировать в GitHub
+collector.freebetCollector.sessionParams          // Текущие параметры сессии
+```
+
 ### Синхронизация (v2.1.0)
 ```javascript
 collector.sync()                                  // Синхронизировать с GitHub
@@ -376,9 +406,10 @@ collector.githubSync.showSetupDialog()            // Открыть диалог
 ## Что НЕ трогать
 
 - **XHRInterceptor** — перехват operations работает
-- **earlyInit** — критичен для перехвата операций
+- **earlyInit** — критичен для перехвата операций (getFreebets удалён в v2.2.0 — страница кешировала fetch)
 - **OperationsCollector** — основной модуль сбора данных
 - **BetsDetailsFetcher** — загрузка деталей с exponential backoff
+- **FreebetCollector._loadSessionParamsFromStorage** — зависит от ключей `red.*` в localStorage
 
 ---
 
@@ -475,6 +506,7 @@ body: JSON.stringify({
 
 ### Как извлекаются sessionParams
 
+**На странице /operations** (из перехваченных запросов):
 ```javascript
 this.sessionParams = {
     fsid: params.fsid,
@@ -483,6 +515,19 @@ this.sessionParams = {
     CDI: params.CDI,        // Есть на pari.ru, undefined на fon.bet
     deviceId: params.deviceId  // Есть на pari.ru, undefined на fon.bet
 };
+```
+
+**На странице /bonuses** (из `unsafeWindow.localStorage`, v2.2.0):
+```javascript
+// Tampermonkey sandbox требует unsafeWindow для доступа к localStorage страницы
+const ls = unsafeWindow.localStorage;
+this.sessionParams = {
+    fsid: ls.getItem('red.fsid'),
+    clientId: parseInt(ls.getItem('red.clientId'), 10),
+    deviceId: ls.getItem('red.deviceID'),       // Заглавная D!
+    sysId: parseInt(ls.getItem('red.lastSysId'), 10)
+};
+// CDI не нужен для getFreebets
 ```
 
 ### regId в экспорте
@@ -495,7 +540,22 @@ regId: group.regId || group.details?.header?.regId || group.marker
 
 ## История версий
 
-### v2.1.1 (текущая)
+### v2.2.0 (текущая)
+- **FreebetCollector (Фаза 16):** модуль сбора фрибетов с `/bonuses`
+  - Автозагрузка через API `POST /client/getFreebets` при инициализации
+  - SessionParams из `unsafeWindow.localStorage` (обход sandbox Tampermonkey)
+  - CDI не требуется для API getFreebets
+  - UI панель: кол-во активных фрибетов, сумма, кнопки «Обновить» и «Sync Freebets»
+- Удалён перехват getFreebets из earlyInit (fetch + XHR, ~66 строк) — страница кешировала fetch до патча
+- Удалён `GET_FREEBETS` из `URL_PATTERNS`
+- Защита от дублирования панели (`document.getElementById` guard в `UIPanel.create()`)
+- Защита от повторной инициализации (`unsafeWindow._fcInitialized` guard в `init()`)
+- Добавлены `@match` для `/bonuses` (fon.bet + pari.ru)
+- **v2.2.1:** Фикс crash `showProgress()` на /bonuses (null-check `progressDetails`); `getSyncStatus()` учитывает страницу `/bonuses`; корректное отображение `lastSyncResult` для freebets sync
+- **v2.2.2:** Визуальная обратная связь кнопки «Обновить» (⏳→✅/❌, disabled во время запроса)
+- Итого: ~3520 → ~3941 строк (+421 строка)
+
+### v2.1.1
 - Cleanup: удалён мёртвый код (EventBus, onCollectionComplete, setActiveGroups, fetchAllBetsDetails, UIPanel.destroy, Notification.requestPermission)
   - **SegmentMapper возвращён в Фазе 14** — загрузка `segment_mappings.json` из GitHub Raw, поле `segments` в экспорте
 - Объединены дублированные ветки завершения сбора (data.completed === true)
