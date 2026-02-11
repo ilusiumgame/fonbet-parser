@@ -2804,19 +2804,33 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
             const result = await this._apiRequest('GET', `/repos/${this.repoOwner}/${this.repoName}/contents/${path}`);
             if (result.status === 404 || !result.data) return null;
 
-            if (!result.data.content) {
-                console.error('❌ [GitHubSync] Файл не содержит content (возможно, слишком большой)');
+            let base64Content = result.data.content;
+            const sha = result.data.sha;
+
+            // Файл > 1MB: Contents API не возвращает content, используем Git Blob API
+            if (!base64Content && sha) {
+                console.log('📦 [GitHubSync] Файл > 1MB, загрузка через Git Blob API...');
+                const blobResult = await this._apiRequest('GET', `/repos/${this.repoOwner}/${this.repoName}/git/blobs/${sha}`);
+                if (!blobResult.data || !blobResult.data.content) {
+                    console.error('❌ [GitHubSync] Git Blob API не вернул content');
+                    return null;
+                }
+                base64Content = blobResult.data.content;
+            }
+
+            if (!base64Content) {
+                console.error('❌ [GitHubSync] Файл не содержит content');
                 return null;
             }
 
             try {
                 // GitHub API возвращает base64 с переносами строк — убираем их
-                const cleanBase64 = result.data.content.replace(/\s/g, '');
+                const cleanBase64 = base64Content.replace(/\s/g, '');
                 // Обратное преобразование к btoa(unescape(encodeURIComponent(...)))
                 const binaryString = atob(cleanBase64);
                 const decodedString = decodeURIComponent(escape(binaryString));
                 const content = JSON.parse(decodedString);
-                return { content, sha: result.data.sha };
+                return { content, sha };
             } catch (e) {
                 console.error('❌ [GitHubSync] Ошибка декодирования файла:', e.message);
                 return null;

@@ -24,6 +24,7 @@
 | Фаза 9 | ✅ ВЫПОЛНЕНО | GitHub Sync — синхронизация с GitHub (v2.1.0) |
 | Фаза 10 | ✅ ВЫПОЛНЕНО | Cleanup и рефакторинг (v2.1.1) |
 | Фаза 11 | ✅ ВЫПОЛНЕНО | UI-фиксы панели настроек + баг-фиксы |
+| Фаза 12 | ✅ ВЫПОЛНЕНО | Фикс: nextOperations ломал сбор операций |
 
 ---
 
@@ -474,3 +475,38 @@ betting-data/
 - [x] Причина 2: запись файла через `btoa(unescape(encodeURIComponent(...)))`, но чтение через простой `atob()` без `decodeURIComponent(escape(...))` — Cyrillic ломает JSON
 - [x] Исправлено: `_getFile()` теперь очищает base64 от whitespace, декодирует UTF-8 корректно, добавлена обработка ошибок
 - **Воспроизведение:** выполнить `collector.sync()` дважды подряд — первый sync успешен, второй падает
+
+---
+
+## Фаза 12: Фикс nextOperations ✅ ВЫПОЛНЕНО (v2.1.1-hotfix)
+
+### Проблема:
+- [x] **Сбор операций останавливался на 200 вместо полной истории (~8000+)**
+  - Проявление: при холодном старте браузера коллектор собирал только начальный batch из `lastOperations` (~200 операций) и останавливался
+  - При reload страницы (тёплый старт) иногда работало корректно — затрудняло диагностику
+
+### Причина:
+- Страница fon.bet непрерывно поллит endpoint `nextOperations` для обновлений в реальном времени (40+ запросов)
+- `earlyInit` перехватывал все три паттерна: `LAST_OPERATIONS`, `NEXT_OPERATIONS`, `PREV_OPERATIONS`
+- Ответы `nextOperations` (пустые, `completed: true`) кэшировались в `window._collectorCachedOperations`
+- При вызове `start()` кэшированные ответы обрабатывались последовательно:
+  1. `lastOperations` (200 ops) → запускал async `_requestNextOperations()` для пагинации
+  2. `nextOperations` (0 ops, `completed: true`) → попадал в ветку `else` → `this.completed = true; this.stop()` — убивал коллектор
+  3. Async `_requestNextOperations()` приходил позже, но `isCollecting` уже `false` → игнорировался
+- Скрипт **никогда не использовал** `nextOperations` — пагинация идёт через `prevOperations`
+
+### Исправление:
+- [x] Удалён `URL_PATTERNS.NEXT_OPERATIONS` из константы
+- [x] Удалён перехват `nextOperations` из `XHRInterceptor._patchXHR()`
+- [x] Удалён перехват `nextOperations` из `XHRInterceptor._patchFetch()`
+- [x] Удалён перехват `nextOperations` из `earlyInit()` fetch patch
+- [x] Удалён перехват `nextOperations` из `earlyInit()` XHR patch
+- Всего изменено 5 мест в коде
+
+### Результат тестирования:
+- **До фикса:** 200 операций (холодный старт)
+- **После фикса:** 8282 операции (все уникальны по `saldoId + Id`)
+- 115 сальдо-периодов, от 1 до 100 операций в каждом
+- Период: 30.11.2025 — 11.02.2026 (~73 дня)
+- Распределение: 3609 ставок, 1805 выигрышей, 1705 проигрышей, 249 фрибетов, 86 депозитов, 93 вывода
+- Коммит: `8fed10b`

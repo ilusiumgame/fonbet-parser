@@ -2,7 +2,7 @@
 
 Tampermonkey скрипт для сбора истории операций с fon.bet и pari.ru. Работает на странице `/account/history/operations` обоих сайтов. Автоопределение сайта, перехват XHR/fetch, сбор операций через API, группировка по marker, автоматическая загрузка деталей ставок, экспорт в JSON v2.1, инкрементальная синхронизация с GitHub.
 
-**Версия:** v2.1.1 — Cleanup, UI-фиксы, исправления пагинации и синхронизации
+**Версия:** v2.1.1 — Cleanup, UI-фиксы, исправления пагинации, синхронизации и nextOperations
 
 ---
 
@@ -10,7 +10,7 @@ Tampermonkey скрипт для сбора истории операций с f
 
 ```
 Файл:    universal_collector_v2.0.0.user.js
-Строки:  ~3459
+Строки:  ~3455
 Версия:  2.1.1
 ```
 
@@ -23,7 +23,7 @@ Tampermonkey скрипт для сбора истории операций с f
                @grant GM_xmlhttpRequest, @connect api.github.com)
 23:            Constants (VERSION, DEBUG_MODE)
 28-45:         logger
-47-52:         URL_PATTERNS (LAST/NEXT/PREV_OPERATIONS)
+47-50:         URL_PATTERNS (LAST/PREV_OPERATIONS)
 54-115:        SiteDetector (автоопределение сайта)
 116-670:       OperationsCollector (динамические URL через SiteDetector)
 671-861:       BetsDetailsFetcher (динамический coupon/info URL)
@@ -31,7 +31,7 @@ Tampermonkey скрипт для сбора истории операций с f
 963-967:       LIMITS (UI_UPDATE_INTERVAL_MS)
 969-988:       AppState (isInterceptorRunning, isCollectionCompleted, config)
 990-998:       getCurrentPageType()
-1000-1218:     XHRInterceptor (LAST/NEXT/PREV_OPERATIONS)
+1000-1218:     XHRInterceptor (LAST/PREV_OPERATIONS)
 1219-2504:     UIPanel (кнопка Sync, статус, toggle-переключатели, настройки Sync)
 2505-2709:     ExportModule (_buildExportData + exportOperations)
 2710-3292:     GitHubSync (API, merge, sync, setup dialog, changeAlias)
@@ -171,8 +171,8 @@ const XHRInterceptor = {
     isRunning(),
 
     // Внутренние методы
-    _patchXHR(),                    // operations (LAST/NEXT/PREV)
-    _patchFetch(),                  // operations (LAST/NEXT/PREV)
+    _patchXHR(),                    // operations (LAST/PREV)
+    _patchFetch(),                  // operations (LAST/PREV)
     _handleOperationsLoad(xhr, isInitial, requestBody)
 };
 ```
@@ -469,8 +469,9 @@ regId: group.regId || group.details?.header?.regId || group.marker
 - Исправлена пагинация: initial lastOperations с completed:true теперь проверяет prevOperations
 - Исправлен sync: _getFile() корректно декодирует base64 с UTF-8 (Cyrillic)
 - Исправлена кодировка Unicode в alert GitHubSync
+- **Фикс nextOperations:** удалён перехват `nextOperations` из всех интерсепторов (earlyInit, XHRInterceptor) — страница поллит этот endpoint для real-time обновлений, кэшированные ответы (`completed:true`) останавливали коллектор после 200 операций вместо полной пагинации через `prevOperations`. Результат: 8282 операции вместо 200.
 - Обновлён @author
-- Итого: 3549 → ~3459 строк
+- Итого: 3549 → ~3455 строк
 
 ### v2.1.0
 - Модуль GitHubSync: инкрементальная синхронизация с приватным GitHub-репозиторием
