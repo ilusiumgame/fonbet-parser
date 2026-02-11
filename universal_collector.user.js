@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Fonbet & Pari Collector
 // @namespace    http://tampermonkey.net/
-// @version      2.2.2
+// @version      2.2.3
 // @description  Сбор истории ставок и операций с fon.bet и pari.ru с синхронизацией в GitHub
 // @author       ilusiumgame
 // @match        https://fon.bet/account/history/operations
@@ -23,7 +23,7 @@
     'use strict';
     // 1. CONSTANTS & CONFIG
 
-    const VERSION = '2.2.2';
+    const VERSION = '2.2.3';
 
     const DEBUG_MODE = false; // Установить в true для отладки
 
@@ -181,10 +181,11 @@
         _loadSessionParamsFromStorage() {
             try {
                 const ls = unsafeWindow.localStorage;
-                const fsid = ls.getItem('red.fsid');
-                const clientId = ls.getItem('red.clientId');
-                const deviceId = ls.getItem('red.deviceID');
-                const sysId = ls.getItem('red.lastSysId');
+                const prefix = SiteDetector.currentSite?.id === 'pari' ? 'pb' : 'red';
+                const fsid = ls.getItem(`${prefix}.fsid`);
+                const clientId = ls.getItem(`${prefix}.clientId`);
+                const deviceId = ls.getItem(`${prefix}.deviceID`);
+                const sysId = ls.getItem(`${prefix}.lastSysId`);
                 if (fsid && clientId) {
                     this.sessionParams = {
                         fsid,
@@ -662,7 +663,7 @@
         // Группировка операций по marker
         _groupByMarker(operations) {
             operations.forEach(op => {
-                const marker = op.marker || op.markerId;
+                const marker = op.marker || op.markerId || `saldo_${op.saldoId}`;
                 if (!marker) return;
 
                 const markerKey = String(marker);
