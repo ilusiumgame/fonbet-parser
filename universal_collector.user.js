@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Fonbet & Pari Collector
 // @namespace    http://tampermonkey.net/
-// @version      2.2.1
+// @version      2.2.2
 // @description  Сбор истории ставок и операций с fon.bet и pari.ru с синхронизацией в GitHub
 // @author       ilusiumgame
 // @match        https://fon.bet/account/history/operations
@@ -23,7 +23,7 @@
     'use strict';
     // 1. CONSTANTS & CONFIG
 
-    const VERSION = '2.2.1';
+    const VERSION = '2.2.2';
 
     const DEBUG_MODE = false; // Установить в true для отладки
 
@@ -2273,8 +2273,21 @@
             if (this.pageType === 'bonuses') {
                 // Refresh Freebets
                 this.elements.btnRefreshFb.addEventListener('click', () => {
+                    const btn = this.elements.btnRefreshFb;
+                    const originalText = btn.textContent;
+                    btn.textContent = '⏳ Загрузка...';
+                    btn.disabled = true;
                     FreebetCollector.fetchFreebets().then(success => {
-                        if (success) this.update();
+                        if (success) {
+                            this.update();
+                            btn.textContent = '✅ Обновлено!';
+                        } else {
+                            btn.textContent = '❌ Ошибка';
+                        }
+                        setTimeout(() => {
+                            btn.textContent = originalText;
+                            btn.disabled = false;
+                        }, 1500);
                     });
                 });
 
