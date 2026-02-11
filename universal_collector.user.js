@@ -6,6 +6,8 @@
 // @author       ilusiumgame
 // @match        https://fon.bet/account/history/operations
 // @match        https://pari.ru/account/history/operations
+// @match        https://fon.bet/bonuses*
+// @match        https://pari.ru/bonuses*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_xmlhttpRequest
@@ -156,6 +158,137 @@
         getName(segmentId) {
             if (!segmentId) return null;
             return this.mappings[String(segmentId)] || null;
+        }
+    };
+
+    // FreebetCollector Module
+    const FreebetCollector = {
+        freebets: [],
+        sessionParams: null,
+        isLoaded: false,
+
+        init() {
+            // Читаем sessionParams из localStorage (надёжнее перехвата fetch)
+            this._loadSessionParamsFromStorage();
+            // Автоматически загружаем фрибеты
+            if (this.sessionParams) {
+                this.fetchFreebets();
+            } else {
+                console.error('❌ [FreebetCollector] Не удалось получить sessionParams из localStorage');
+            }
+        },
+
+        _loadSessionParamsFromStorage() {
+            try {
+                const ls = unsafeWindow.localStorage;
+                const fsid = ls.getItem('red.fsid');
+                const clientId = ls.getItem('red.clientId');
+                const deviceId = ls.getItem('red.deviceID');
+                const sysId = ls.getItem('red.lastSysId');
+                if (fsid && clientId) {
+                    this.sessionParams = {
+                        fsid,
+                        clientId: parseInt(clientId, 10),
+                        deviceId: deviceId || undefined,
+                        sysId: sysId ? parseInt(sysId, 10) : undefined
+                    };
+                    console.log('✅ [FreebetCollector] sessionParams загружены из localStorage');
+                }
+            } catch (e) {
+                console.error('❌ [FreebetCollector] Ошибка чтения localStorage:', e);
+            }
+        },
+
+        handleResponse(data) {
+            if (!data || data.result !== 'freebets' || !Array.isArray(data.list)) return;
+
+            this.freebets = data.list;
+            this.isLoaded = true;
+            console.log(`✅ [FreebetCollector] Загружено ${data.list.length} фрибетов (${this.getActiveFreebets().length} активных)`);
+        },
+
+        getActiveFreebets() {
+            return this.freebets.filter(fb => fb.state === 'active');
+        },
+
+        getStats() {
+            const active = this.getActiveFreebets();
+            const totalValue = active.reduce((sum, fb) => sum + (fb.value || 0), 0);
+            return {
+                total: this.freebets.length,
+                active: active.length,
+                used: this.freebets.filter(fb => fb.state === 'used').length,
+                totalValue,
+                totalValueFormatted: `${(totalValue / 100).toLocaleString('ru-RU')} \u20BD`,
+                isLoaded: this.isLoaded
+            };
+        },
+
+        _buildSyncData() {
+            const active = this.getActiveFreebets();
+            const totalValue = active.reduce((sum, fb) => sum + (fb.value || 0), 0);
+
+            return {
+                version: VERSION,
+                account: {
+                    siteId: SiteDetector.currentSite?.id || 'unknown',
+                    siteName: SiteDetector.getSiteName(),
+                    clientId: this.sessionParams?.clientId || 'unknown',
+                    alias: GitHubSync.accountAlias || 'unknown'
+                },
+                lastSync: new Date().toISOString(),
+                totalActive: active.length,
+                totalValue,
+                totalValueFormatted: `${(totalValue / 100).toLocaleString('ru-RU')} \u20BD`,
+                activeFreebets: active.map(fb => ({
+                    id: fb.id,
+                    value: fb.value,
+                    valueFormatted: `${(fb.value / 100).toLocaleString('ru-RU')} \u20BD`,
+                    state: fb.state,
+                    kind: fb.kind,
+                    promoId: fb.promoId || '',
+                    restriction: fb.restriction,
+                    restrictionDescription: fb.restrictionDescription,
+                    createdTime: fb.createdTime,
+                    expireTime: fb.expireTime
+                }))
+            };
+        },
+
+        async fetchFreebets() {
+            if (!this.sessionParams) {
+                console.error('❌ [FreebetCollector] Нет sessionParams для запроса');
+                return false;
+            }
+
+            const apiBase = SiteDetector.getFallbackApiBase();
+            if (!apiBase) {
+                console.error('❌ [FreebetCollector] API base не определён');
+                return false;
+            }
+
+            try {
+                const body = {
+                    lang: 'ru',
+                    includeInactive: false,
+                    ...this.sessionParams
+                };
+                // Удаляем undefined значения
+                Object.keys(body).forEach(k => body[k] === undefined && delete body[k]);
+
+                const response = await fetch(`${apiBase}/client/getFreebets`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+                    body: JSON.stringify(body)
+                });
+
+                const data = await response.json();
+                this.handleResponse(data);
+                return true;
+            } catch (error) {
+                console.error('❌ [FreebetCollector] Ошибка запроса:', error);
+                return false;
+            }
         }
     };
 
@@ -1032,12 +1165,15 @@
 
     /**
      * Определить тип текущей страницы
-     * @returns {string} - 'operations' или 'unknown'
+     * @returns {string} - 'operations', 'bonuses' или 'unknown'
      */
     function getCurrentPageType() {
         const url = window.location.href;
         if (url.includes('/account/history/operations')) {
             return 'operations';
+        }
+        if (url.includes('/bonuses')) {
+            return 'bonuses';
         }
         return 'unknown';
     }
@@ -1275,6 +1411,7 @@
         init(appState) {
             logger.log('🔧 [UIPanel] Инициализация...');
             this.appState = appState;
+            this.pageType = getCurrentPageType();
             logger.info('✅ [UIPanel] Готов к работе');
         },
 
@@ -1282,6 +1419,11 @@
          * Создание панели
          */
         create() {
+            // Защита от дублирования панели
+            if (document.getElementById('fonbet-collector-panel')) {
+                console.warn('⚠️ [UIPanel] Панель уже существует, пропускаем создание');
+                return;
+            }
             console.log('🎨 [UIPanel] Создание панели...');
 
             // Создаём контейнер панели
@@ -1311,6 +1453,11 @@
         update() {
             if (!this.elements.panel) return;
 
+            if (this.pageType === 'bonuses') {
+                this._updateFreebetsStats();
+                return;
+            }
+
             const stats = OperationsCollector.getStats();
 
             // Обновляем счётчики (показываем количество собранных операций)
@@ -1332,6 +1479,70 @@
          * HTML структура панели
          */
         _getHTML() {
+            if (this.pageType === 'bonuses') return this._getFreebetsHTML();
+            return this._getOperationsHTML();
+        },
+
+        _getFreebetsHTML() {
+            return `
+                <div class="fc-header">
+                    <span class="fc-title"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAMAAAAp4XiDAAABL1BMVEXIDAAAAAD/////7e3/4+P46en03dnyxMTz1dXppaLjlpPlm5j6+vrijor9/f3hh4PeeXXZX1zaYln+/v7TRUHURj7ROzXQNi79+Pj+/v7OKybOJhzRPzrNJh/LIRrNIBfLGhL////MGA3////trajLGg/JFg3IEAnIDAHBAADJDgHICgDICwH//////Pz++Pj98/L77Oz65OP43t7219b20tH0ysfywsDvt7TurajqoZ3pnJfmkIzmjonjjo/lioXkiIPifnjhenTgdnHfcm/da2TcamrcZl/bX1naWlPYUUnXS0LWRjzUPTPTNy3OIhbNGg/LEwnKDgLJDQDIDQDIDADICgDGCgPICADHBADEBQHGAQDEAADDAADBAADAAAC/AAC+AAC9AAC3AACzAABtw1coAAAALXRSTlPyAAMHCREWJypHSVVoaHV0h5OdrrS7vMjP0tPX3N3c4eHl5u/u8PDw8fHy8/yesYKyAAACSUlEQVR42pXW7VrTMBiA4VQEPyYCfjBlMnFTmWJlczAGihtsKmMMtjWJ7ZqmTfT8j0FKr8V0vpHy/O79423SpMhKur+yWtxExirF/ErOSkJWXG6Nh5xRTA0R6vOQry8qcms15C4m14Qpj/ILCZnLCwCAKCouXJFV6QACzBHrMckJl2SOyqVL8pLj7AQHH26je9wlN4iKRfQowjchOHyK8pzM5DIeRWKmYEySWAFt+ETPYSIcDXrfOkfp+hOS5JfQe6oDX/48adbsf2vL6TAVtIU1wXm3boOdhdNhthBKiaYNVx2z6VNII04wadiGmtyFiCv3bVNHEgPEEWdGEY8CEC+oG8X2iAEEi75tbDd0AULFZ1vV+NrWa/UnGCC+W1OiKaRIxR0CkEgb/kI4BE4nWLaV2OUeyUA8vqfIQUSzEDaqKnIsSRbCz23VIMxCsDhRoj7zvlwHJERblZ3v3Y7W8XACEp/t2KZGDCT8wij2uAcQNQrUoSAAUaNAnUYg8YKGSXwcBiBh46qJNAIPJOHANvVFEohg0TGSnsQQccP9v9u4fZhKLaQiV0cf0z6v3m+RynfSIj76aHpPnnOaCtiW8TEuutBZAueV4suCigPoncKxQnwl6QvZktdfSbnQZcNtYHvAOWIJWW94dApsDzjM/HlkLQrZyjwKlcvxr0LhV0Pb6fh/woneWjGZf/FJkR+CmMM03Lwbk0vzLMvhggmLNu6on6uH5UTUXGaYwWM8QstzliLW/IPHz1+Vy6/fVVRIr1Jae7K0kDz7B0O2kFNj+nSDAAAAAElFTkSuQmCC" class="fc-logo" alt="Fonbet"> Collector v${VERSION} (${SiteDetector.getSiteName()})</span>
+                    <div class="fc-header-buttons">
+                        <button class="fc-btn-icon fc-btn-settings" title="Настройки">⚙️</button>
+                        <button class="fc-btn-icon fc-btn-minimize" title="Свернуть">−</button>
+                        <button class="fc-btn-icon fc-btn-help" title="Справка">?</button>
+                    </div>
+                </div>
+
+                <div class="fc-body">
+                    <div class="fc-mode-indicator">
+                        <span class="fc-mode-emoji">🎁</span>
+                        <span class="fc-mode-name">Freebets Collector</span>
+                    </div>
+
+                    <div class="fc-divider"></div>
+
+                    <div class="fc-stats">
+                        <div class="fc-stat">
+                            <span class="fc-stat-label">Активных фрибетов:</span>
+                            <span class="fc-stat-value" id="fc-fb-active-count">—</span>
+                        </div>
+                        <div class="fc-stat">
+                            <span class="fc-stat-label">На сумму:</span>
+                            <span class="fc-stat-value" id="fc-fb-total-value">—</span>
+                        </div>
+                        <div class="fc-stat">
+                            <span class="fc-stat-label">Всего фрибетов:</span>
+                            <span class="fc-stat-value" id="fc-fb-total-count">—</span>
+                        </div>
+                    </div>
+
+                    <div class="fc-divider"></div>
+
+                    <div class="fc-controls">
+                        <button class="fc-btn fc-btn-primary" id="fc-btn-refresh-fb">🔄 Обновить</button>
+                        <button class="fc-btn fc-btn-sync" id="fc-btn-sync-fb">📤 Sync Freebets</button>
+                    </div>
+
+                    <div class="fc-sync-status" id="fc-sync-status"></div>
+
+                    <!-- ПРОГРЕСС-БАР -->
+                    <div class="fc-progress-section" id="fc-progress-section" style="display: none;">
+                        <div class="fc-progress-header">
+                            <span class="fc-progress-stage" id="fc-progress-stage"></span>
+                            <span class="fc-progress-percent" id="fc-progress-percent">0%</span>
+                        </div>
+                        <div class="fc-progress-bar">
+                            <div class="fc-progress-fill" id="fc-progress-fill" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <div class="fc-status" id="fc-status"></div>
+                </div>
+            `;
+        },
+
+        _getOperationsHTML() {
             return `
                 <div class="fc-header">
                     <span class="fc-title"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAMAAAAp4XiDAAABL1BMVEXIDAAAAAD/////7e3/4+P46en03dnyxMTz1dXppaLjlpPlm5j6+vrijor9/f3hh4PeeXXZX1zaYln+/v7TRUHURj7ROzXQNi79+Pj+/v7OKybOJhzRPzrNJh/LIRrNIBfLGhL////MGA3////trajLGg/JFg3IEAnIDAHBAADJDgHICgDICwH//////Pz++Pj98/L77Oz65OP43t7219b20tH0ysfywsDvt7TurajqoZ3pnJfmkIzmjonjjo/lioXkiIPifnjhenTgdnHfcm/da2TcamrcZl/bX1naWlPYUUnXS0LWRjzUPTPTNy3OIhbNGg/LEwnKDgLJDQDIDQDIDADICgDGCgPICADHBADEBQHGAQDEAADDAADBAADAAAC/AAC+AAC9AAC3AACzAABtw1coAAAALXRSTlPyAAMHCREWJypHSVVoaHV0h5OdrrS7vMjP0tPX3N3c4eHl5u/u8PDw8fHy8/yesYKyAAACSUlEQVR42pXW7VrTMBiA4VQEPyYCfjBlMnFTmWJlczAGihtsKmMMtjWJ7ZqmTfT8j0FKr8V0vpHy/O79423SpMhKur+yWtxExirF/ErOSkJWXG6Nh5xRTA0R6vOQry8qcms15C4m14Qpj/ILCZnLCwCAKCouXJFV6QACzBHrMckJl2SOyqVL8pLj7AQHH26je9wlN4iKRfQowjchOHyK8pzM5DIeRWKmYEySWAFt+ETPYSIcDXrfOkfp+hOS5JfQe6oDX/48adbsf2vL6TAVtIU1wXm3boOdhdNhthBKiaYNVx2z6VNII04wadiGmtyFiCv3bVNHEgPEEWdGEY8CEC+oG8X2iAEEi75tbDd0AULFZ1vV+NrWa/UnGCC+W1OiKaRIxR0CkEgb/kI4BE4nWLaV2OUeyUA8vqfIQUSzEDaqKnIsSRbCz23VIMxCsDhRoj7zvlwHJERblZ3v3Y7W8XACEp/t2KZGDCT8wij2uAcQNQrUoSAAUaNAnUYg8YKGSXwcBiBh46qJNAIPJOHANvVFEohg0TGSnsQQccP9v9u4fZhKLaQiV0cf0z6v3m+RynfSIj76aHpPnnOaCtiW8TEuutBZAueV4suCigPoncKxQnwl6QvZktdfSbnQZcNtYHvAOWIJWW94dApsDzjM/HlkLQrZyjwKlcvxr0LhV0Pb6fh/woneWjGZf/FJkR+CmMM03Lwbk0vzLMvhggmLNu6on6uH5UTUXGaYwWM8QstzliLW/IPHz1+Vy6/fVVRIr1Jae7K0kDz7B0O2kFNj+nSDAAAAAElFTkSuQmCC" class="fc-logo" alt="Fonbet"> Collector v${VERSION} (${SiteDetector.getSiteName()})</span>
@@ -2011,66 +2222,87 @@
             this.elements = {
                 panel: document.getElementById('fonbet-collector-panel'),
 
-                // Кнопки
-                btnStartAll: document.getElementById('fc-btn-start-all'),
-                btnStopAll: document.getElementById('fc-btn-stop-all'),
-                btnExportOps: document.getElementById('fc-btn-export-ops'),
+                // Общие кнопки
                 btnSettings: document.querySelector('.fc-btn-settings'),
                 btnMinimize: document.querySelector('.fc-btn-minimize'),
                 btnHelp: document.querySelector('.fc-btn-help'),
-
-                // Счётчики
-                xhrCount: document.getElementById('fc-stat-xhr'),
-
-                // Статистика операций
-                opsBets: document.getElementById('fc-ops-bets'),
-                opsFast: document.getElementById('fc-ops-fast'),
-                opsFree: document.getElementById('fc-ops-free'),
-                opsDeposits: document.getElementById('fc-ops-deposits'),
-                opsWithdrawals: document.getElementById('fc-ops-withdrawals'),
-                opsBonus: document.getElementById('fc-ops-bonus'),
 
                 // Прогресс-бар
                 progressSection: document.getElementById('fc-progress-section'),
                 progressStage: document.getElementById('fc-progress-stage'),
                 progressPercent: document.getElementById('fc-progress-percent'),
                 progressFill: document.getElementById('fc-progress-fill'),
-                progressDetails: document.getElementById('fc-progress-details'),
-                detailsLoaded: document.getElementById('fc-details-loaded'),
-                detailsTotal: document.getElementById('fc-details-total'),
 
                 // Статус
                 status: document.getElementById('fc-status'),
 
                 // Sync
-                btnSync: document.getElementById('fc-btn-sync'),
                 syncStatus: document.getElementById('fc-sync-status')
             };
+
+            if (this.pageType === 'bonuses') {
+                // Freebets-specific elements
+                this.elements.fbActiveCount = document.getElementById('fc-fb-active-count');
+                this.elements.fbTotalValue = document.getElementById('fc-fb-total-value');
+                this.elements.fbTotalCount = document.getElementById('fc-fb-total-count');
+                this.elements.btnRefreshFb = document.getElementById('fc-btn-refresh-fb');
+                this.elements.btnSyncFb = document.getElementById('fc-btn-sync-fb');
+            } else {
+                // Operations-specific elements
+                this.elements.btnStartAll = document.getElementById('fc-btn-start-all');
+                this.elements.btnStopAll = document.getElementById('fc-btn-stop-all');
+                this.elements.btnExportOps = document.getElementById('fc-btn-export-ops');
+                this.elements.btnSync = document.getElementById('fc-btn-sync');
+                this.elements.xhrCount = document.getElementById('fc-stat-xhr');
+                this.elements.opsBets = document.getElementById('fc-ops-bets');
+                this.elements.opsFast = document.getElementById('fc-ops-fast');
+                this.elements.opsFree = document.getElementById('fc-ops-free');
+                this.elements.opsDeposits = document.getElementById('fc-ops-deposits');
+                this.elements.opsWithdrawals = document.getElementById('fc-ops-withdrawals');
+                this.elements.opsBonus = document.getElementById('fc-ops-bonus');
+                this.elements.progressDetails = document.getElementById('fc-progress-details');
+                this.elements.detailsLoaded = document.getElementById('fc-details-loaded');
+                this.elements.detailsTotal = document.getElementById('fc-details-total');
+            }
         },
 
         /**
          * Добавление обработчиков событий
          */
         _attachEventListeners() {
-            // Start All
-            this.elements.btnStartAll.addEventListener('click', () => {
-                this._handleStartAll();
-            });
+            if (this.pageType === 'bonuses') {
+                // Refresh Freebets
+                this.elements.btnRefreshFb.addEventListener('click', () => {
+                    FreebetCollector.fetchFreebets().then(success => {
+                        if (success) this.update();
+                    });
+                });
 
-            // Stop All
-            this.elements.btnStopAll.addEventListener('click', () => {
-                this._handleStopAll();
-            });
+                // Sync Freebets
+                this.elements.btnSyncFb.addEventListener('click', () => {
+                    GitHubSync.syncFreebets();
+                });
+            } else {
+                // Start All
+                this.elements.btnStartAll.addEventListener('click', () => {
+                    this._handleStartAll();
+                });
 
-            // Export Operations
-            this.elements.btnExportOps.addEventListener('click', () => {
-                ExportModule.exportOperations();
-            });
+                // Stop All
+                this.elements.btnStopAll.addEventListener('click', () => {
+                    this._handleStopAll();
+                });
 
-            // Sync
-            this.elements.btnSync.addEventListener('click', () => {
-                GitHubSync.sync();
-            });
+                // Export Operations
+                this.elements.btnExportOps.addEventListener('click', () => {
+                    ExportModule.exportOperations();
+                });
+
+                // Sync
+                this.elements.btnSync.addEventListener('click', () => {
+                    GitHubSync.sync();
+                });
+            }
 
             // Settings
             this.elements.btnSettings.addEventListener('click', () => {
@@ -2093,6 +2325,11 @@
          * @returns {string}
          */
         _getStateHash() {
+            if (this.pageType === 'bonuses') {
+                const stats = FreebetCollector.getStats();
+                return `fb:${stats.total}:${stats.active}:${stats.totalValue}:${GitHubSync.isSyncing}:${GitHubSync.lastSyncResult?.date || ''}`;
+            }
+
             const s = this.appState;
             const stats = OperationsCollector.getStats();
 
@@ -2198,6 +2435,19 @@
             }
             if (this.elements.opsBonus) {
                 this.elements.opsBonus.textContent = stats.byCategory?.bonus || 0;
+            }
+        },
+
+        _updateFreebetsStats() {
+            const stats = FreebetCollector.getStats();
+            if (this.elements.fbActiveCount) this.elements.fbActiveCount.textContent = stats.active;
+            if (this.elements.fbTotalValue) this.elements.fbTotalValue.textContent = stats.totalValueFormatted;
+            if (this.elements.fbTotalCount) this.elements.fbTotalCount.textContent = stats.total;
+
+            // Обновляем sync status
+            if (this.elements.syncStatus) {
+                const syncStatus = GitHubSync.getSyncStatus();
+                this.elements.syncStatus.textContent = syncStatus.text;
             }
         },
 
@@ -3155,6 +3405,95 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
             }
         },
 
+        // === Sync Freebets ===
+        async syncFreebets() {
+            if (this.isSyncing) {
+                console.warn('⚠️ [GitHubSync] Синхронизация уже в процессе');
+                return;
+            }
+
+            if (!this.isConfigured()) {
+                this.showSetupDialog();
+                return;
+            }
+
+            if (!FreebetCollector.isLoaded) {
+                alert('\u26A0\uFE0F \u0414\u043E\u0436\u0434\u0438\u0442\u0435\u0441\u044C \u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438 \u0434\u0430\u043D\u043D\u044B\u0445 \u043E \u0444\u0440\u0438\u0431\u0435\u0442\u0430\u0445.');
+                return;
+            }
+
+            this.isSyncing = true;
+            console.log('🔄 [GitHubSync] Синхронизация фрибетов...');
+
+            try {
+                // Этап 1: Подготовка данных
+                UIPanel.showProgress('Sync 1/3: Подготовка данных...', 33);
+                const syncData = FreebetCollector._buildSyncData();
+
+                // Этап 2: Проверка существующего файла
+                UIPanel.showProgress('Sync 2/3: Загрузка из GitHub...', 66);
+                const siteId = SiteDetector.currentSite?.id || 'unknown';
+                const clientId = FreebetCollector.sessionParams?.clientId || 'unknown';
+                const filePath = `freebets/${siteId}/${clientId}_${this.accountAlias}.json`;
+
+                let sha = null;
+                try {
+                    const existingFile = await this._getFile(filePath);
+                    if (existingFile) {
+                        sha = existingFile.sha;
+                    }
+                } catch (e) {
+                    // Файл не существует — создаём новый
+                }
+
+                // Этап 3: Сохранение в GitHub (перезапись)
+                UIPanel.showProgress('Sync 3/3: Сохранение в GitHub...', 90);
+                const stats = FreebetCollector.getStats();
+                const commitMessage = `Freebets ${this.accountAlias}: ${stats.active} active, ${stats.totalValueFormatted}`;
+
+                try {
+                    await this._putFile(filePath, syncData, sha, commitMessage);
+                } catch (e) {
+                    if (e.message === 'SHA_CONFLICT') {
+                        console.warn('⚠️ [GitHubSync] SHA conflict, retry...');
+                        const freshFile = await this._getFile(filePath);
+                        await this._putFile(filePath, syncData, freshFile?.sha || null, commitMessage);
+                    } else {
+                        throw e;
+                    }
+                }
+
+                // Успех
+                this.lastSyncResult = {
+                    success: true,
+                    date: new Date().toISOString(),
+                    type: 'freebets',
+                    activeFreebets: stats.active,
+                    totalValue: stats.totalValueFormatted
+                };
+
+                UIPanel.showProgress(`\u2705 Sync: ${stats.active} \u0444\u0440\u0438\u0431\u0435\u0442\u043E\u0432 \u043D\u0430 ${stats.totalValueFormatted}`, 100);
+                console.log(`✅ [GitHubSync] Фрибеты синхронизированы: ${stats.active} активных на ${stats.totalValueFormatted}`);
+
+            } catch (error) {
+                this.lastSyncResult = { success: false, date: new Date().toISOString(), type: 'freebets', error: error.message };
+
+                const messages = {
+                    'INVALID_TOKEN': '\u041D\u0435\u0432\u0430\u043B\u0438\u0434\u043D\u044B\u0439 GitHub \u0442\u043E\u043A\u0435\u043D. \u041F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438.',
+                    'RATE_LIMIT': '\u041F\u0440\u0435\u0432\u044B\u0448\u0435\u043D \u043B\u0438\u043C\u0438\u0442 GitHub API. \u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u0435 \u0447\u0435\u0440\u0435\u0437 \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u043E \u043C\u0438\u043D\u0443\u0442.',
+                    'NETWORK_ERROR': '\u041E\u0448\u0438\u0431\u043A\u0430 \u0441\u0435\u0442\u0438. \u041F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u0435.',
+                    'TIMEOUT': '\u0422\u0430\u0439\u043C\u0430\u0443\u0442 \u0437\u0430\u043F\u0440\u043E\u0441\u0430. \u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u0435 \u043F\u043E\u043F\u044B\u0442\u043A\u0443.'
+                };
+
+                const msg = messages[error.message] || `\u041E\u0448\u0438\u0431\u043A\u0430: ${error.message}`;
+                console.error(`❌ [GitHubSync] ${msg}`);
+                UIPanel.showProgress(`\u274C Sync: ${msg}`, 0);
+                alert(`\u274C \u041E\u0448\u0438\u0431\u043A\u0430 \u0441\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0430\u0446\u0438\u0438\n\n${msg}`);
+            } finally {
+                this.isSyncing = false;
+            }
+        },
+
         // === Изменение alias ===
         async changeAlias(newAlias) {
             if (!newAlias || !/^[a-zA-Z0-9_]+$/.test(newAlias)) {
@@ -3366,79 +3705,119 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
 
     // ИНИЦИАЛИЗАЦИЯ
 
+    let _initCalled = false;
     function init() {
+        if (_initCalled) return;
+        _initCalled = true;
+        // Защита от повторного запуска (Tampermonkey может инжектить скрипт дважды)
+        const gw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+        if (gw._fcInitialized) return;
+        gw._fcInitialized = true;
         console.log(`\n${'='.repeat(60)}`);
         logger.info(`🎰 Collector v${VERSION}`);
         logger.info(`${'='.repeat(60)}\n`);
 
         SiteDetector.detect();
 
-        XHRInterceptor.init(AppState);
+        const pageType = getCurrentPageType();
+
         UIPanel.init(AppState);
-        ExportModule.init(AppState);
-        OperationsCollector.init();
-        BetsDetailsFetcher.init();
         SettingsManager.init();
         GitHubSync.init();
-        SegmentMapper.init();
 
-        // Создаём UI панель
-        UIPanel.create();
+        if (pageType === 'bonuses') {
+            // Страница фрибетов: инициализируем FreebetCollector
+            FreebetCollector.init();
 
-        // Экспорт в unsafeWindow для консольного доступа
-        const exportTarget = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-        exportTarget.collector = {
-            version: VERSION,
-            site: SiteDetector.getSiteName(),
-            siteDetector: SiteDetector,
-            state: AppState,
-            interceptor: XHRInterceptor,
-            operationsCollector: OperationsCollector,
-            betsDetailsFetcher: BetsDetailsFetcher,
-            settingsManager: SettingsManager,
-            githubSync: GitHubSync,
-            segmentMapper: SegmentMapper,
-            exportOperations: () => ExportModule.exportOperations(),
-            fetchBetsDetails: () => OperationsCollector._autoLoadBetsDetails(),
-            sync: () => GitHubSync.sync(),
-            changeAlias: (alias) => GitHubSync.changeAlias(alias),
-            uiPanel: UIPanel,
-            URL_PATTERNS: URL_PATTERNS
-        };
+            // Создаём UI панель
+            UIPanel.create();
 
-        // Экспорт данных через DOM для DevTools доступа
-        const panel = document.getElementById('fonbet-collector-panel');
-        if (panel) {
-            const updatePanelData = () => {
-                const stats = OperationsCollector.getStats();
-                const detailsStats = BetsDetailsFetcher.getStats();
-                panel.setAttribute('data-fc-version', VERSION);
-                panel.setAttribute('data-fc-stats', JSON.stringify({
-                    ...stats,
-                    details: detailsStats
-                }));
+            // Экспорт в unsafeWindow для консольного доступа
+            const exportTarget = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+            exportTarget.collector = {
+                version: VERSION,
+                site: SiteDetector.getSiteName(),
+                siteDetector: SiteDetector,
+                state: AppState,
+                freebetCollector: FreebetCollector,
+                settingsManager: SettingsManager,
+                githubSync: GitHubSync,
+                syncFreebets: () => GitHubSync.syncFreebets(),
+                changeAlias: (alias) => GitHubSync.changeAlias(alias),
+                uiPanel: UIPanel,
+                URL_PATTERNS: URL_PATTERNS
             };
 
-            // Обновляем данные сразу и каждые 500мс
-            updatePanelData();
-            setInterval(updatePanelData, 500);
+            logger.info('✅ Collector инициализирован (Freebets mode)');
+            console.log('📝 Доступ из консоли: window.collector');
+            console.log('📝 Синхронизация: collector.syncFreebets()\n');
+
+        } else {
+            // Страница операций: инициализируем все модули
+            XHRInterceptor.init(AppState);
+            ExportModule.init(AppState);
+            OperationsCollector.init();
+            BetsDetailsFetcher.init();
+            SegmentMapper.init();
+
+            // Создаём UI панель
+            UIPanel.create();
+
+            // Экспорт в unsafeWindow для консольного доступа
+            const exportTarget = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+            exportTarget.collector = {
+                version: VERSION,
+                site: SiteDetector.getSiteName(),
+                siteDetector: SiteDetector,
+                state: AppState,
+                interceptor: XHRInterceptor,
+                operationsCollector: OperationsCollector,
+                betsDetailsFetcher: BetsDetailsFetcher,
+                settingsManager: SettingsManager,
+                githubSync: GitHubSync,
+                segmentMapper: SegmentMapper,
+                exportOperations: () => ExportModule.exportOperations(),
+                fetchBetsDetails: () => OperationsCollector._autoLoadBetsDetails(),
+                sync: () => GitHubSync.sync(),
+                changeAlias: (alias) => GitHubSync.changeAlias(alias),
+                uiPanel: UIPanel,
+                URL_PATTERNS: URL_PATTERNS
+            };
+
+            // Экспорт данных через DOM для DevTools доступа
+            const panel = document.getElementById('fonbet-collector-panel');
+            if (panel) {
+                const updatePanelData = () => {
+                    const stats = OperationsCollector.getStats();
+                    const detailsStats = BetsDetailsFetcher.getStats();
+                    panel.setAttribute('data-fc-version', VERSION);
+                    panel.setAttribute('data-fc-stats', JSON.stringify({
+                        ...stats,
+                        details: detailsStats
+                    }));
+                };
+
+                // Обновляем данные сразу и каждые 500мс
+                updatePanelData();
+                setInterval(updatePanelData, 500);
+            }
+
+            logger.info('✅ Collector инициализирован');
+            console.log('📝 Доступ из консоли: window.collector\n');
+
+            // Автозапуск сбора операций на странице операций
+            if (pageType === 'operations') {
+                console.log('🚀 [AutoStart] Страница операций обнаружена - автозапуск сбора...');
+                setTimeout(() => {
+                    XHRInterceptor.start();
+                    OperationsCollector.start();
+                    UIPanel.showProgress('Этап 1: Сбор операций...', 0);
+                    console.log('✅ [AutoStart] Сбор операций запущен автоматически');
+                }, 1000);
+            }
         }
 
-        logger.info('✅ Collector инициализирован');
-        console.log('📝 Доступ из консоли: window.collector\n');
         logger.info(`${'='.repeat(60)}\n`);
-
-        // Автозапуск сбора операций на странице операций
-        const pageType = getCurrentPageType();
-        if (pageType === 'operations') {
-            console.log('🚀 [AutoStart] Страница операций обнаружена - автозапуск сбора...');
-            setTimeout(() => {
-                XHRInterceptor.start();
-                OperationsCollector.start();
-                UIPanel.showProgress('Этап 1: Сбор операций...', 0);
-                console.log('✅ [AutoStart] Сбор операций запущен автоматически');
-            }, 1000);
-        }
     }
 
     // РАННЯЯ инициализация: патчим fetch/XHR сразу (до загрузки страницы)
