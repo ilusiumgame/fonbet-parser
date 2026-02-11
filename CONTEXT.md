@@ -2,7 +2,7 @@
 
 Tampermonkey скрипт для сбора истории операций с fon.bet и pari.ru. Работает на странице `/account/history/operations` (сбор ставок) и `/bonuses` (сбор фрибетов) обоих сайтов. Автоопределение сайта, перехват XHR/fetch, сбор операций через API, группировка по marker, автоматическая загрузка деталей ставок, экспорт в JSON v2.1, инкрементальная синхронизация с GitHub, сбор фрибетов.
 
-**Версия:** v2.2.2 — FreebetCollector, сбор фрибетов с /bonuses, баг-фиксы sync/UI
+**Версия:** v2.2.3 — FreebetCollector на pari.ru, группировка бонусов без marker
 
 ---
 
@@ -10,13 +10,13 @@ Tampermonkey скрипт для сбора истории операций с f
 
 ```
 Файл:    universal_collector.user.js
-Строки:  ~3941
-Версия:  2.2.2
+Строки:  ~3942
+Версия:  2.2.3
 ```
 
 ---
 
-## Структура кода (v2.2.2)
+## Структура кода (v2.2.3)
 
 ```
 1-20:          Tampermonkey Metadata (@run-at document-start, @match fon.bet + pari.ru
@@ -275,7 +275,7 @@ const UIPanel = {
 
 ```javascript
 {
-    "version": "2.2.2",
+    "version": "2.2.3",
     "site": "Fonbet",
     "exportDate": "...",
     "account": {
@@ -328,7 +328,7 @@ const UIPanel = {
 
 ```javascript
 {
-    "version": "2.2.2",
+    "version": "2.2.3",
     "account": { siteId, siteName, clientId, alias },
     "lastSync": "2026-02-08T14:30:00.000Z",
     "syncHistory": [
@@ -517,16 +517,18 @@ this.sessionParams = {
 };
 ```
 
-**На странице /bonuses** (из `unsafeWindow.localStorage`, v2.2.0):
+**На странице /bonuses** (из `unsafeWindow.localStorage`, v2.2.3):
 ```javascript
 // Tampermonkey sandbox требует unsafeWindow для доступа к localStorage страницы
 const ls = unsafeWindow.localStorage;
+const prefix = SiteDetector.currentSite?.id === 'pari' ? 'pb' : 'red';
 this.sessionParams = {
-    fsid: ls.getItem('red.fsid'),
-    clientId: parseInt(ls.getItem('red.clientId'), 10),
-    deviceId: ls.getItem('red.deviceID'),       // Заглавная D!
-    sysId: parseInt(ls.getItem('red.lastSysId'), 10)
+    fsid: ls.getItem(`${prefix}.fsid`),
+    clientId: parseInt(ls.getItem(`${prefix}.clientId`), 10),
+    deviceId: ls.getItem(`${prefix}.deviceID`),       // Заглавная D!
+    sysId: parseInt(ls.getItem(`${prefix}.lastSysId`), 10)
 };
+// Префиксы localStorage: fon.bet → red.*, pari.ru → pb.*
 // CDI не нужен для getFreebets
 ```
 
@@ -553,7 +555,8 @@ regId: group.regId || group.details?.header?.regId || group.marker
 - Добавлены `@match` для `/bonuses` (fon.bet + pari.ru)
 - **v2.2.1:** Фикс crash `showProgress()` на /bonuses (null-check `progressDetails`); `getSyncStatus()` учитывает страницу `/bonuses`; корректное отображение `lastSyncResult` для freebets sync
 - **v2.2.2:** Визуальная обратная связь кнопки «Обновить» (⏳→✅/❌, disabled во время запроса)
-- Итого: ~3520 → ~3941 строк (+421 строка)
+- **v2.2.3:** FreebetCollector на pari.ru — localStorage-префикс `pb.*` вместо `red.*` (определяется через SiteDetector); группировка операций без marker (бонусы) через fallback `saldo_{saldoId}`
+- Итого: ~3520 → ~3942 строк (+422 строки)
 
 ### v2.1.1
 - Cleanup: удалён мёртвый код (EventBus, onCollectionComplete, setActiveGroups, fetchAllBetsDetails, UIPanel.destroy, Notification.requestPermission)

@@ -1,4 +1,4 @@
-# TODO: Fonbet & Pari Collector v2.2.2
+# TODO: Fonbet & Pari Collector v2.2.3
 
 Мультисайтовый сбор данных с fon.bet и pari.ru. Страницы: `/operations` (история операций), `/bonuses` (фрибеты).
 
@@ -30,6 +30,7 @@
 | Фаза 15 | ✅ ВЫПОЛНЕНО | Баг-фиксы: повторный старт, "готово к sync", UI настроек |
 | Фаза 16 | ✅ ВЫПОЛНЕНО | FreebetCollector: сбор фрибетов с /bonuses (v2.2.0) |
 | Фаза 16.1 | ✅ ВЫПОЛНЕНО | Баг-фиксы FreebetCollector (v2.2.1–v2.2.2) |
+| Фаза 17 | ✅ ВЫПОЛНЕНО | Pari-совместимость: FreebetCollector + бонусы без marker (v2.2.3) |
 
 ---
 
@@ -209,3 +210,23 @@ Body: {"regId": <marker>, "lang": "ru", "betTypeName": "sport", "fsid": "...", .
 
 ### v2.2.2:
 - [x] **Визуальная обратная связь кнопки «Обновить»** — показывает "⏳ Загрузка...", затем "✅ Обновлено!" / "❌ Ошибка" (1.5 сек), кнопка disabled во время запроса
+
+---
+
+## Фаза 17: Pari-совместимость ✅ ВЫПОЛНЕНО (v2.2.3)
+
+### Проблемы (обнаружены при тестировании pari.ru, профиль 37):
+
+### 17.1. FreebetCollector не работает на pari.ru
+- [x] **Причина:** `_loadSessionParamsFromStorage()` захардкожен на префикс `red.*`, а pari.ru использует `pb.*` в localStorage
+- [x] **Исправление:** определение префикса через `SiteDetector.currentSite.id` — `pari` → `pb`, иначе → `red`
+
+### 17.2. Бонусные операции (operationId: 17) не группируются
+- [x] **Причина:** `_groupByMarker()` пропускает операции без `marker` (`if (!marker) return`), а бонусные операции не имеют поля `marker`
+- [x] **Исправление:** fallback на `saldo_{saldoId}` — `const marker = op.marker || op.markerId || \`saldo_${op.saldoId}\``
+
+### Результаты тестирования (pari.ru):
+- Операций: 6365, Групп: 3252, Осиротевших: 0 (было 2)
+- Бонусных групп: 2 (было 0)
+- FreebetCollector: 1 активный фрибет, 10 000 ₽
+- Все тесты пройдены
