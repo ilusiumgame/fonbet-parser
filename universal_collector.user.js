@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Fonbet & Pari Collector
 // @namespace    http://tampermonkey.net/
-// @version      2.2.0
+// @version      2.2.1
 // @description  Сбор истории ставок и операций с fon.bet и pari.ru с синхронизацией в GitHub
 // @author       ilusiumgame
 // @match        https://fon.bet/account/history/operations
@@ -23,7 +23,7 @@
     'use strict';
     // 1. CONSTANTS & CONFIG
 
-    const VERSION = '2.2.0';
+    const VERSION = '2.2.1';
 
     const DEBUG_MODE = false; // Установить в true для отладки
 
@@ -2462,12 +2462,14 @@
             this.elements.progressPercent.textContent = `${Math.round(percent)}%`;
             this.elements.progressFill.style.width = `${percent}%`;
 
-            if (total > 0) {
-                this.elements.progressDetails.style.display = 'block';
-                this.elements.detailsLoaded.textContent = loaded;
-                this.elements.detailsTotal.textContent = total;
-            } else {
-                this.elements.progressDetails.style.display = 'none';
+            if (this.elements.progressDetails) {
+                if (total > 0) {
+                    this.elements.progressDetails.style.display = 'block';
+                    this.elements.detailsLoaded.textContent = loaded;
+                    this.elements.detailsTotal.textContent = total;
+                } else {
+                    this.elements.progressDetails.style.display = 'none';
+                }
             }
         },
 
@@ -3692,11 +3694,21 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
                 if (this.lastSyncResult.success) {
                     const date = new Date(this.lastSyncResult.date);
                     const formatted = `${date.toLocaleDateString()} ${date.toLocaleTimeString().slice(0, 5)}`;
+                    if (this.lastSyncResult.type === 'freebets') {
+                        return { state: 'success', text: `Sync: ${formatted} (${this.lastSyncResult.activeFreebets} фрибетов)` };
+                    }
                     return { state: 'success', text: `Sync: ${formatted} (+${this.lastSyncResult.added})` };
                 }
                 return { state: 'error', text: `Ошибка: ${this.lastSyncResult.error}` };
             }
             if (!AppState.isCollectionCompleted) {
+                const pageType = getCurrentPageType();
+                if (pageType === 'bonuses') {
+                    if (FreebetCollector.isLoaded) {
+                        return { state: 'ready', text: 'Готов к Sync' };
+                    }
+                    return { state: 'waiting', text: 'Загрузка фрибетов...' };
+                }
                 return { state: 'waiting', text: 'Ожидание сбора данных...' };
             }
             return { state: 'ready', text: 'Готов к Sync' };
