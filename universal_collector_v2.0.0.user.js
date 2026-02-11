@@ -46,7 +46,6 @@
     // URL паттерны для перехвата
     const URL_PATTERNS = {
         LAST_OPERATIONS: /\/session\/client\/lastOperations$/,
-        NEXT_OPERATIONS: /\/session\/client\/nextOperations$/,
         PREV_OPERATIONS: /\/session\/client\/prevOperations$/
     };
 
@@ -1093,7 +1092,7 @@
             // Патчим send() - добавляем слушатели
             XMLHttpRequest.prototype.send = function(...args) {
                 // Перехват операций
-                if (this._fc_url && (URL_PATTERNS.LAST_OPERATIONS.test(this._fc_url) || URL_PATTERNS.NEXT_OPERATIONS.test(this._fc_url) || URL_PATTERNS.PREV_OPERATIONS.test(this._fc_url))) {
+                if (this._fc_url && (URL_PATTERNS.LAST_OPERATIONS.test(this._fc_url) || URL_PATTERNS.PREV_OPERATIONS.test(this._fc_url))) {
                     const isLastOperations = URL_PATTERNS.LAST_OPERATIONS.test(this._fc_url);
                     logger.debug('💰 [XHRInterceptor] Перехвачен запрос операций:', this._fc_url);
 
@@ -1138,7 +1137,7 @@
                 const urlString = typeof url === 'string' ? url : url.url;
 
                 // Перехват операций
-                if (urlString && (URL_PATTERNS.LAST_OPERATIONS.test(urlString) || URL_PATTERNS.NEXT_OPERATIONS.test(urlString) || URL_PATTERNS.PREV_OPERATIONS.test(urlString))) {
+                if (urlString && (URL_PATTERNS.LAST_OPERATIONS.test(urlString) || URL_PATTERNS.PREV_OPERATIONS.test(urlString))) {
                     const isLastOperations = URL_PATTERNS.LAST_OPERATIONS.test(urlString);
                     logger.debug('💰 [XHRInterceptor/Fetch] Перехвачен запрос операций:', urlString);
 
@@ -3380,7 +3379,7 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
         unsafeWindow.fetch = async function(url, options = {}) {
             const urlString = typeof url === 'string' ? url : url.url;
 
-            if (urlString && (URL_PATTERNS.LAST_OPERATIONS.test(urlString) || URL_PATTERNS.NEXT_OPERATIONS.test(urlString) || URL_PATTERNS.PREV_OPERATIONS.test(urlString))) {
+            if (urlString && (URL_PATTERNS.LAST_OPERATIONS.test(urlString) || URL_PATTERNS.PREV_OPERATIONS.test(urlString))) {
                 const isLastOperations = URL_PATTERNS.LAST_OPERATIONS.test(urlString);
 
                 try {
@@ -3416,7 +3415,7 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
         };
 
         XMLHttpRequest.prototype.send = function(...args) {
-            if (this._fc_url && (URL_PATTERNS.LAST_OPERATIONS.test(this._fc_url) || URL_PATTERNS.NEXT_OPERATIONS.test(this._fc_url) || URL_PATTERNS.PREV_OPERATIONS.test(this._fc_url))) {
+            if (this._fc_url && (URL_PATTERNS.LAST_OPERATIONS.test(this._fc_url) || URL_PATTERNS.PREV_OPERATIONS.test(this._fc_url))) {
                 const isLastOperations = URL_PATTERNS.LAST_OPERATIONS.test(this._fc_url);
                 this._fc_requestBody = args[0];
 
