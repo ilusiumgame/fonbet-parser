@@ -10,7 +10,7 @@ Tampermonkey скрипт для сбора истории операций с f
 
 ```
 Файл:    universal_collector_v2.0.0.user.js
-Строки:  ~3455
+Строки:  ~3473
 Версия:  2.1.1
 ```
 
@@ -470,8 +470,9 @@ regId: group.regId || group.details?.header?.regId || group.marker
 - Исправлен sync: _getFile() корректно декодирует base64 с UTF-8 (Cyrillic)
 - Исправлена кодировка Unicode в alert GitHubSync
 - **Фикс nextOperations:** удалён перехват `nextOperations` из всех интерсепторов (earlyInit, XHRInterceptor) — страница поллит этот endpoint для real-time обновлений, кэшированные ответы (`completed:true`) останавливали коллектор после 200 операций вместо полной пагинации через `prevOperations`. Результат: 8282 операции вместо 200.
+- **Фикс Git Blob API:** `_getFile()` использует fallback на Git Blob API (`/git/blobs/{sha}`) для файлов > 1 MB, которые Contents API возвращает без content. Результат: sync работает для файлов до 100 MB.
 - Обновлён @author
-- Итого: 3549 → ~3455 строк
+- Итого: 3549 → ~3473 строк
 
 ### v2.1.0
 - Модуль GitHubSync: инкрементальная синхронизация с приватным GitHub-репозиторием
