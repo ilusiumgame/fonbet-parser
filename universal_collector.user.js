@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Fonbet & Pari Collector
 // @namespace    http://tampermonkey.net/
-// @version      2.4.0
+// @version      2.5.0
 // @description  Сбор истории ставок и операций с fon.bet и pari.ru с синхронизацией в GitHub
 // @author       ilusiumgame
 // @match        https://fon.bet/account/history/operations
@@ -26,7 +26,7 @@
     'use strict';
     // 1. CONSTANTS & CONFIG
 
-    const VERSION = '2.4.0';
+    const VERSION = '2.5.0';
 
     const DEBUG_MODE = false; // Установить в true для отладки
 
@@ -546,10 +546,16 @@
                 b.bet_status?.type === 'BET_STATUS_TYPES_RETURN' ||
                 b.bet_status?.type === 'BET_STATUS_TYPES_PARTIAL_RETURN'
             ).length;
+            const canceled = this.bets.filter(b => b.bet_status?.type === 'BET_STATUS_TYPES_CANCELED').length;
             const inProgress = this.bets.filter(b =>
                 b.bet_status?.type === 'BET_STATUS_TYPES_IN_PROGRESS'
             ).length;
             const sold = this.bets.filter(b => b.bet_status?.type === 'BET_STATUS_TYPES_SOLD').length;
+
+            // По типу валюты (currency_code)
+            const regularBetsArr = this.bets.filter(b => b.currency_code === 'RUB');
+            const freebetBetsArr = this.bets.filter(b => b.currency_code === 'FREEBET_RUB');
+            const bonusBetsArr = this.bets.filter(b => b.currency_code === 'BONUS_RUB');
 
             const deposits = this.payments.filter(p => !p.is_payout);
             const withdrawals = this.payments.filter(p => p.is_payout);
@@ -559,7 +565,17 @@
 
             return {
                 totalBets: this.bets.length,
-                wins, losses, returns, inProgress, sold,
+                wins, losses, returns, canceled, inProgress, sold,
+                // По типу ставки
+                regularBets: regularBetsArr.length,
+                freebetBets: freebetBetsArr.length,
+                bonusBets: bonusBetsArr.length,
+                regularStaked: regularBetsArr.reduce((s, b) => s + (b.bet_sum || 0), 0),
+                regularWon: regularBetsArr.reduce((s, b) => s + (b.bet_win || 0), 0),
+                freebetStaked: freebetBetsArr.reduce((s, b) => s + (b.bet_sum || 0), 0),
+                freebetWon: freebetBetsArr.reduce((s, b) => s + (b.bet_win || 0), 0),
+                bonusStaked: bonusBetsArr.reduce((s, b) => s + (b.bet_sum || 0), 0),
+                bonusWon: bonusBetsArr.reduce((s, b) => s + (b.bet_win || 0), 0),
                 totalPayments: this.payments.length,
                 deposits: deposits.length,
                 withdrawals: withdrawals.length,
@@ -578,6 +594,12 @@
             if (this.bets.length === 0 && this.payments.length === 0) return null;
 
             const stats = this.getStats();
+            const regularBets = this.bets.filter(b => b.currency_code === 'RUB').map(b => this._formatBet(b));
+            const freebetBets = this.bets.filter(b => b.currency_code === 'FREEBET_RUB').map(b => this._formatBet(b));
+            const bonusBets = this.bets.filter(b => b.currency_code === 'BONUS_RUB').map(b => this._formatBet(b));
+            const deposits = this.payments.filter(p => !p.is_payout).map(p => this._formatPayment(p));
+            const withdrawals = this.payments.filter(p => p.is_payout).map(p => this._formatPayment(p));
+
             return {
                 version: VERSION,
                 site: 'BetBoom',
@@ -595,8 +617,18 @@
                     wins: stats.wins,
                     losses: stats.losses,
                     returns: stats.returns,
+                    canceled: stats.canceled,
                     inProgress: stats.inProgress,
                     sold: stats.sold,
+                    regularBets: stats.regularBets,
+                    freebetBets: stats.freebetBets,
+                    bonusBets: stats.bonusBets,
+                    regularStaked: stats.regularStaked,
+                    regularWon: stats.regularWon,
+                    freebetStaked: stats.freebetStaked,
+                    freebetWon: stats.freebetWon,
+                    bonusStaked: stats.bonusStaked,
+                    bonusWon: stats.bonusWon,
                     totalPayments: stats.totalPayments,
                     deposits: stats.deposits,
                     withdrawals: stats.withdrawals,
@@ -606,8 +638,58 @@
                     totalWon: stats.totalWon,
                     profit: stats.profit
                 },
-                bets: this.bets,
-                payments: this.payments
+                bets: regularBets,
+                freebetBets,
+                bonusBets,
+                finance: {
+                    deposits,
+                    withdrawals
+                }
+            };
+        },
+
+        _formatBet(bet) {
+            const other = bet.other || {};
+            return {
+                bet_uid: bet.bet_uid,
+                bet_id: bet.bet_id,
+                status: bet.bet_status?.type,
+                statusName: bet.bet_status?.name,
+                currency_code: bet.currency_code,
+                bet_type: other.bet_type,
+                create_dttm: bet.create_dttm,
+                result_dttm: bet.result_dttm,
+                bet_sum: bet.bet_sum,
+                bet_win: bet.bet_win,
+                possible_win: bet.possible_win,
+                coeff: other.coeff,
+                stakes: (other.bet_stakes || []).map(s => ({
+                    sport_name: s.sport_name,
+                    category_name: s.category_name,
+                    tournament_name: s.tournament_name,
+                    home_team_name: s.home_team_name,
+                    away_team_name: s.away_team_name,
+                    market_name: s.market_name,
+                    outcome_name: s.outcome_name,
+                    coeff: s.coeff,
+                    is_live: s.is_live,
+                    score: s.score,
+                    match_id: s.match_id,
+                    match_start_dttm: s.match_start_dttm
+                }))
+            };
+        },
+
+        _formatPayment(payment) {
+            return {
+                id: payment.id,
+                amount: payment.amount,
+                is_payout: payment.is_payout,
+                status: payment.status,
+                service_name: payment.service_name,
+                service_id: payment.service_id,
+                dttm_begin: payment.dttm_begin,
+                dttm_end: payment.dttm_end
             };
         }
     };
@@ -1944,9 +2026,32 @@
                                 <span class="fc-ops-value" id="fc-bb-returns">0</span>
                             </div>
                             <div class="fc-ops-item">
+                                <span class="fc-ops-icon">🚫</span>
+                                <span class="fc-ops-label">Отмена:</span>
+                                <span class="fc-ops-value" id="fc-bb-canceled">0</span>
+                            </div>
+                            <div class="fc-ops-item">
                                 <span class="fc-ops-icon">⏳</span>
                                 <span class="fc-ops-label">В игре:</span>
                                 <span class="fc-ops-value" id="fc-bb-progress">0</span>
+                            </div>
+                        </div>
+                        <div class="fc-ops-header" style="margin-top: 8px;">По типу ставки</div>
+                        <div class="fc-ops-grid">
+                            <div class="fc-ops-item">
+                                <span class="fc-ops-icon">💰</span>
+                                <span class="fc-ops-label">Обычные:</span>
+                                <span class="fc-ops-value" id="fc-bb-regular">0</span>
+                            </div>
+                            <div class="fc-ops-item">
+                                <span class="fc-ops-icon">🎁</span>
+                                <span class="fc-ops-label">Фрибеты:</span>
+                                <span class="fc-ops-value" id="fc-bb-freebets">0</span>
+                            </div>
+                            <div class="fc-ops-item">
+                                <span class="fc-ops-icon">⭐</span>
+                                <span class="fc-ops-label">Бонусные:</span>
+                                <span class="fc-ops-value" id="fc-bb-bonus">0</span>
                             </div>
                         </div>
                         <div class="fc-ops-header" style="margin-top: 8px;">Финансы</div>
@@ -2706,7 +2811,11 @@
                 this.elements.bbWins = document.getElementById('fc-bb-wins');
                 this.elements.bbLosses = document.getElementById('fc-bb-losses');
                 this.elements.bbReturns = document.getElementById('fc-bb-returns');
+                this.elements.bbCanceled = document.getElementById('fc-bb-canceled');
                 this.elements.bbProgress = document.getElementById('fc-bb-progress');
+                this.elements.bbRegular = document.getElementById('fc-bb-regular');
+                this.elements.bbFreebets = document.getElementById('fc-bb-freebets');
+                this.elements.bbBonus = document.getElementById('fc-bb-bonus');
                 this.elements.bbDeposits = document.getElementById('fc-bb-deposits');
                 this.elements.bbWithdrawals = document.getElementById('fc-bb-withdrawals');
                 this.elements.bbProfit = document.getElementById('fc-bb-profit');
@@ -2963,7 +3072,11 @@
             if (this.elements.bbWins) this.elements.bbWins.textContent = stats.wins;
             if (this.elements.bbLosses) this.elements.bbLosses.textContent = stats.losses;
             if (this.elements.bbReturns) this.elements.bbReturns.textContent = stats.returns;
+            if (this.elements.bbCanceled) this.elements.bbCanceled.textContent = stats.canceled;
             if (this.elements.bbProgress) this.elements.bbProgress.textContent = stats.inProgress;
+            if (this.elements.bbRegular) this.elements.bbRegular.textContent = stats.regularBets;
+            if (this.elements.bbFreebets) this.elements.bbFreebets.textContent = stats.freebetBets;
+            if (this.elements.bbBonus) this.elements.bbBonus.textContent = stats.bonusBets;
             if (this.elements.bbDeposits) this.elements.bbDeposits.textContent = stats.deposits;
             if (this.elements.bbWithdrawals) this.elements.bbWithdrawals.textContent = stats.withdrawals;
             if (this.elements.bbProfit) this.elements.bbProfit.textContent = `${stats.profit.toLocaleString('ru-RU')} ₽`;
@@ -3007,7 +3120,7 @@
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
-            logger.info(`[UIPanel] Экспорт BetBoom: ${data.bets.length} ставок, ${data.payments.length} платежей`);
+            logger.info(`[UIPanel] Экспорт BetBoom: ${data.bets.length} обычных, ${data.freebetBets.length} фрибетов, ${data.bonusBets.length} бонусных, ${data.finance.deposits.length + data.finance.withdrawals.length} платежей`);
         },
 
         /**
@@ -3929,12 +4042,17 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
             const stats = { added: 0, updated: 0 };
 
             const betsResult = this._mergeArray(remote?.bets, local.bets, 'bet_uid');
-            const paymentsResult = this._mergeArray(remote?.payments, local.payments, 'id');
+            const freebetBetsResult = this._mergeArray(remote?.freebetBets, local.freebetBets, 'bet_uid');
+            const bonusBetsResult = this._mergeArray(remote?.bonusBets, local.bonusBets, 'bet_uid');
+            const depositsResult = this._mergeArray(remote?.finance?.deposits, local.finance?.deposits, 'id');
+            const withdrawalsResult = this._mergeArray(remote?.finance?.withdrawals, local.finance?.withdrawals, 'id');
 
-            stats.added = betsResult.added + paymentsResult.added;
-            stats.updated = betsResult.updated + paymentsResult.updated;
+            stats.added = betsResult.added + freebetBetsResult.added + bonusBetsResult.added + depositsResult.added + withdrawalsResult.added;
+            stats.updated = betsResult.updated + freebetBetsResult.updated + bonusBetsResult.updated + depositsResult.updated + withdrawalsResult.updated;
 
             const betsStats = BetBoomCollector.getStats();
+            const totalBets = betsResult.merged.length + freebetBetsResult.merged.length + bonusBetsResult.merged.length;
+            const totalPayments = depositsResult.merged.length + withdrawalsResult.merged.length;
             const merged = {
                 version: VERSION,
                 account: {
@@ -3949,26 +4067,47 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
                     ...(remote?.syncHistory || []),
                     {
                         date: new Date().toISOString(),
-                        betsAdded: betsResult.added,
-                        betsUpdated: betsResult.updated,
-                        paymentsAdded: paymentsResult.added,
-                        totalBets: betsResult.merged.length,
-                        totalPayments: paymentsResult.merged.length
+                        betsAdded: betsResult.added + freebetBetsResult.added + bonusBetsResult.added,
+                        betsUpdated: betsResult.updated + freebetBetsResult.updated + bonusBetsResult.updated,
+                        paymentsAdded: depositsResult.added + withdrawalsResult.added,
+                        totalBets,
+                        totalPayments
                     }
                 ],
                 period: local.period,
                 summary: {
-                    totalBets: betsResult.merged.length,
+                    totalBets,
                     wins: betsStats.wins,
                     losses: betsStats.losses,
                     returns: betsStats.returns,
+                    canceled: betsStats.canceled,
                     inProgress: betsStats.inProgress,
-                    totalPayments: paymentsResult.merged.length,
-                    deposits: betsStats.deposits,
-                    withdrawals: betsStats.withdrawals
+                    sold: betsStats.sold,
+                    regularBets: betsResult.merged.length,
+                    freebetBets: freebetBetsResult.merged.length,
+                    bonusBets: bonusBetsResult.merged.length,
+                    regularStaked: betsStats.regularStaked,
+                    regularWon: betsStats.regularWon,
+                    freebetStaked: betsStats.freebetStaked,
+                    freebetWon: betsStats.freebetWon,
+                    bonusStaked: betsStats.bonusStaked,
+                    bonusWon: betsStats.bonusWon,
+                    totalPayments,
+                    deposits: depositsResult.merged.length,
+                    withdrawals: withdrawalsResult.merged.length,
+                    depositsSum: betsStats.depositsSum,
+                    withdrawalsSum: betsStats.withdrawalsSum,
+                    totalStaked: betsStats.totalStaked,
+                    totalWon: betsStats.totalWon,
+                    profit: betsStats.profit
                 },
                 bets: betsResult.merged,
-                payments: paymentsResult.merged
+                freebetBets: freebetBetsResult.merged,
+                bonusBets: bonusBetsResult.merged,
+                finance: {
+                    deposits: depositsResult.merged,
+                    withdrawals: withdrawalsResult.merged
+                }
             };
 
             return { merged, stats };
