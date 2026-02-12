@@ -363,18 +363,47 @@
             logger.info(`[BetBoomCollector] Период сохранён: ${fromDate} — ${toDate}`);
         },
 
+        // === Constants (retry) ===
+        MAX_RETRIES: 3,
+        INITIAL_RETRY_DELAY: 2000,
+        FETCH_TIMEOUT: 30000,
+
         // === API ===
-        async _apiFetch(endpoint, body = {}) {
-            const resp = await fetch(`/api/access/${endpoint}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-                credentials: 'include'
-            });
-            if (!resp.ok) {
-                throw new Error(`HTTP_${resp.status}`);
+        async _apiFetch(endpoint, body = {}, retries = null) {
+            if (retries === null) retries = this.MAX_RETRIES;
+            for (let attempt = 0; attempt <= retries; attempt++) {
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), this.FETCH_TIMEOUT);
+                    const resp = await fetch(`/api/access/${endpoint}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                        credentials: 'include',
+                        signal: controller.signal
+                    });
+                    clearTimeout(timeoutId);
+                    if (!resp.ok) {
+                        if (resp.status >= 500 && attempt < retries) {
+                            const delay = this.INITIAL_RETRY_DELAY * Math.pow(2, attempt);
+                            logger.warn(`[BetBoomCollector] ${endpoint}: HTTP ${resp.status}, retry ${attempt + 1}/${retries} in ${delay}ms`);
+                            await new Promise(r => setTimeout(r, delay));
+                            continue;
+                        }
+                        throw new Error(`HTTP_${resp.status}`);
+                    }
+                    return resp.json();
+                } catch (e) {
+                    if (e.name === 'AbortError' && attempt < retries) {
+                        const delay = this.INITIAL_RETRY_DELAY * Math.pow(2, attempt);
+                        logger.warn(`[BetBoomCollector] ${endpoint}: timeout, retry ${attempt + 1}/${retries} in ${delay}ms`);
+                        await new Promise(r => setTimeout(r, delay));
+                        continue;
+                    }
+                    if (e.name === 'AbortError') throw new Error('TIMEOUT');
+                    throw e;
+                }
             }
-            return resp.json();
         },
 
         async _fetchUserInfo() {
@@ -425,8 +454,8 @@
             if (typeof UIPanel !== 'undefined' && UIPanel.elements?.progressStage) {
                 UIPanel.showProgress('Загрузка платежей...');
             }
-            const data = await this._apiFetch('payments/get_history', );
-            this.payments = data.payments || data || [];
+            const data = await this._apiFetch('payments/get_history');
+            this.payments = data.history || data.payments || [];
             if (!Array.isArray(this.payments)) this.payments = [];
             logger.info(`[BetBoomCollector] Платежей: ${this.payments.length}`);
         },
@@ -4522,6 +4551,7 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
 
         } else if (pageType === 'betboom') {
             // Страница BetBoom: инициализируем BetBoomCollector
+            BetBoomCollector._loadPeriodSettings();
             UIPanel.create();
             BetBoomCollector.init();
 
