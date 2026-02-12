@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Fonbet & Pari Collector
 // @namespace    http://tampermonkey.net/
-// @version      2.2.3
+// @version      2.3.0
 // @description  Сбор истории ставок и операций с fon.bet и pari.ru с синхронизацией в GitHub
 // @author       ilusiumgame
 // @match        https://fon.bet/account/history/operations
@@ -23,7 +23,7 @@
     'use strict';
     // 1. CONSTANTS & CONFIG
 
-    const VERSION = '2.2.3';
+    const VERSION = '2.3.0';
 
     const DEBUG_MODE = false; // Установить в true для отладки
 
@@ -845,6 +845,18 @@
 
             // Показываем завершение (прогресс остаётся видимым)
             UIPanel.showProgress('✅ Готово к экспорту!', 100, stats.loaded, markers.length);
+
+            // Auto-sync если настроен
+            const syncSettings = SettingsManager.getSettings().sync;
+            if (syncSettings?.autoSync && GitHubSync.isConfigured()) {
+                logger.log('🔄 [OperationsCollector] Запуск автоматической синхронизации...');
+                UIPanel.showProgress('🔄 Синхронизация с GitHub...', 100, stats.loaded, markers.length);
+                try {
+                    await GitHubSync.sync();
+                } catch (e) {
+                    console.error('❌ [OperationsCollector] Ошибка auto-sync:', e);
+                }
+            }
         }
     };
 
@@ -1054,6 +1066,9 @@
                 maxRetries: 3,
                 initialRetryDelay: 500,
                 maxRetryDelay: 8000
+            },
+            sync: {
+                autoSync: false
             }
         },
 
@@ -2669,6 +2684,14 @@
                         <div class="fc-settings-section-title">🔄 Синхронизация с GitHub</div>
 
                         <div class="fc-settings-field">
+                            <label class="fc-settings-checkbox-field">
+                                <input type="checkbox" class="fc-settings-checkbox" id="setting-auto-sync">
+                                <span class="fc-toggle"></span>
+                                <span>Автоматический sync после завершения сбора</span>
+                            </label>
+                        </div>
+
+                        <div class="fc-settings-field">
                             <label class="fc-settings-label">Personal Access Token</label>
                             <input type="password" class="fc-settings-input" id="setting-sync-token"
                                    placeholder="ghp_... или github_pat_...">
@@ -2736,6 +2759,9 @@
             document.getElementById('setting-max-retry').value = settings.fetcher.maxRetryDelay;
 
             // Sync
+            const autoSyncCb = document.getElementById('setting-auto-sync');
+            autoSyncCb.checked = settings.sync?.autoSync || false;
+            autoSyncCb.closest('.fc-settings-checkbox-field').classList.toggle('checked', autoSyncCb.checked);
             document.getElementById('setting-sync-token').value = GitHubSync.token || '';
             document.getElementById('setting-sync-owner').value = GitHubSync.repoOwner || '';
             document.getElementById('setting-sync-repo').value = GitHubSync.repoName || '';
@@ -2758,6 +2784,9 @@
                     maxRetries: parseInt(document.getElementById('setting-max-retries').value),
                     initialRetryDelay: parseInt(document.getElementById('setting-initial-retry').value),
                     maxRetryDelay: parseInt(document.getElementById('setting-max-retry').value)
+                },
+                sync: {
+                    autoSync: document.getElementById('setting-auto-sync').checked
                 }
             };
 
@@ -3401,6 +3430,20 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
                 UIPanel.showProgress(`✅ Sync: +${mergeStats.added} новых, ${mergeStats.updated} обновлено`, 100);
                 console.log(`✅ [GitHubSync] Синхронизация завершена: +${mergeStats.added} новых, ${mergeStats.updated} обновлено, всего ${merged.summary.totalGroups} групп`);
 
+                // Sync freebets вместе с основным sync
+                try {
+                    FreebetCollector._loadSessionParamsFromStorage();
+                    if (FreebetCollector.sessionParams) {
+                        UIPanel.showProgress('🎫 Загрузка фрибетов...', 100);
+                        const fbOk = await FreebetCollector.fetchFreebets();
+                        if (fbOk && FreebetCollector.isLoaded) {
+                            await this._syncFreebetsInternal();
+                        }
+                    }
+                } catch (fbError) {
+                    console.warn('⚠️ [GitHubSync] Ошибка sync freebets:', fbError.message);
+                }
+
             } catch (error) {
                 this.lastSyncResult = { success: false, date: new Date().toISOString(), error: error.message };
 
@@ -3439,58 +3482,8 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
             }
 
             this.isSyncing = true;
-            console.log('🔄 [GitHubSync] Синхронизация фрибетов...');
-
             try {
-                // Этап 1: Подготовка данных
-                UIPanel.showProgress('Sync 1/3: Подготовка данных...', 33);
-                const syncData = FreebetCollector._buildSyncData();
-
-                // Этап 2: Проверка существующего файла
-                UIPanel.showProgress('Sync 2/3: Загрузка из GitHub...', 66);
-                const siteId = SiteDetector.currentSite?.id || 'unknown';
-                const clientId = FreebetCollector.sessionParams?.clientId || 'unknown';
-                const filePath = `freebets/${siteId}/${clientId}_${this.accountAlias}.json`;
-
-                let sha = null;
-                try {
-                    const existingFile = await this._getFile(filePath);
-                    if (existingFile) {
-                        sha = existingFile.sha;
-                    }
-                } catch (e) {
-                    // Файл не существует — создаём новый
-                }
-
-                // Этап 3: Сохранение в GitHub (перезапись)
-                UIPanel.showProgress('Sync 3/3: Сохранение в GitHub...', 90);
-                const stats = FreebetCollector.getStats();
-                const commitMessage = `Freebets ${this.accountAlias}: ${stats.active} active, ${stats.totalValueFormatted}`;
-
-                try {
-                    await this._putFile(filePath, syncData, sha, commitMessage);
-                } catch (e) {
-                    if (e.message === 'SHA_CONFLICT') {
-                        console.warn('⚠️ [GitHubSync] SHA conflict, retry...');
-                        const freshFile = await this._getFile(filePath);
-                        await this._putFile(filePath, syncData, freshFile?.sha || null, commitMessage);
-                    } else {
-                        throw e;
-                    }
-                }
-
-                // Успех
-                this.lastSyncResult = {
-                    success: true,
-                    date: new Date().toISOString(),
-                    type: 'freebets',
-                    activeFreebets: stats.active,
-                    totalValue: stats.totalValueFormatted
-                };
-
-                UIPanel.showProgress(`\u2705 Sync: ${stats.active} \u0444\u0440\u0438\u0431\u0435\u0442\u043E\u0432 \u043D\u0430 ${stats.totalValueFormatted}`, 100);
-                console.log(`✅ [GitHubSync] Фрибеты синхронизированы: ${stats.active} активных на ${stats.totalValueFormatted}`);
-
+                await this._syncFreebetsInternal();
             } catch (error) {
                 this.lastSyncResult = { success: false, date: new Date().toISOString(), type: 'freebets', error: error.message };
 
@@ -3508,6 +3501,59 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
             } finally {
                 this.isSyncing = false;
             }
+        },
+
+        async _syncFreebetsInternal() {
+            console.log('🔄 [GitHubSync] Синхронизация фрибетов...');
+
+            // Этап 1: Подготовка данных
+            UIPanel.showProgress('Sync freebets 1/3: Подготовка данных...', 33);
+            const syncData = FreebetCollector._buildSyncData();
+
+            // Этап 2: Проверка существующего файла
+            UIPanel.showProgress('Sync freebets 2/3: Загрузка из GitHub...', 66);
+            const siteId = SiteDetector.currentSite?.id || 'unknown';
+            const clientId = FreebetCollector.sessionParams?.clientId || 'unknown';
+            const filePath = `freebets/${siteId}/${clientId}_${this.accountAlias}.json`;
+
+            let sha = null;
+            try {
+                const existingFile = await this._getFile(filePath);
+                if (existingFile) {
+                    sha = existingFile.sha;
+                }
+            } catch (e) {
+                // Файл не существует — создаём новый
+            }
+
+            // Этап 3: Сохранение в GitHub (перезапись)
+            UIPanel.showProgress('Sync freebets 3/3: Сохранение в GitHub...', 90);
+            const stats = FreebetCollector.getStats();
+            const commitMessage = `Freebets ${this.accountAlias}: ${stats.active} active, ${stats.totalValueFormatted}`;
+
+            try {
+                await this._putFile(filePath, syncData, sha, commitMessage);
+            } catch (e) {
+                if (e.message === 'SHA_CONFLICT') {
+                    console.warn('⚠️ [GitHubSync] SHA conflict, retry...');
+                    const freshFile = await this._getFile(filePath);
+                    await this._putFile(filePath, syncData, freshFile?.sha || null, commitMessage);
+                } else {
+                    throw e;
+                }
+            }
+
+            // Успех
+            this.lastSyncResult = {
+                success: true,
+                date: new Date().toISOString(),
+                type: 'freebets',
+                activeFreebets: stats.active,
+                totalValue: stats.totalValueFormatted
+            };
+
+            UIPanel.showProgress(`\u2705 Sync: ${stats.active} \u0444\u0440\u0438\u0431\u0435\u0442\u043E\u0432 \u043D\u0430 ${stats.totalValueFormatted}`, 100);
+            console.log(`✅ [GitHubSync] Фрибеты синхронизированы: ${stats.active} активных на ${stats.totalValueFormatted}`);
         },
 
         // === Изменение alias ===

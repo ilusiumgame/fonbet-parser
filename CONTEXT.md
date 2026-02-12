@@ -2,7 +2,7 @@
 
 Tampermonkey скрипт для сбора истории операций с fon.bet и pari.ru. Работает на странице `/account/history/operations` (сбор ставок) и `/bonuses` (сбор фрибетов) обоих сайтов. Автоопределение сайта, перехват XHR/fetch, сбор операций через API, группировка по marker, автоматическая загрузка деталей ставок, экспорт в JSON v2.1, инкрементальная синхронизация с GitHub, сбор фрибетов.
 
-**Версия:** v2.2.3 — FreebetCollector на pari.ru, группировка бонусов без marker
+**Версия:** v2.3.0 — Auto-sync после завершения сбора, объединённый sync freebets
 
 ---
 
@@ -10,8 +10,8 @@ Tampermonkey скрипт для сбора истории операций с f
 
 ```
 Файл:    universal_collector.user.js
-Строки:  ~3942
-Версия:  2.2.3
+Строки:  ~3988
+Версия:  2.3.0
 ```
 
 ---
@@ -542,7 +542,18 @@ regId: group.regId || group.details?.header?.regId || group.marker
 
 ## История версий
 
-### v2.2.0 (текущая)
+### v2.3.0 (текущая)
+- **Auto-sync (Фаза 18, F-2):** автоматическая синхронизация после завершения сбора операций и загрузки деталей
+  - Настройка `sync.autoSync` в SettingsManager (toggle в панели настроек, default: false)
+  - Проверка `autoSync` + `isConfigured()` в конце `_autoLoadBetsDetails()`
+  - Ошибка auto-sync не блокирует основной процесс
+- **Объединённый sync freebets (Фаза 18, F-3):** основной `sync()` автоматически загружает и синхронизирует фрибеты
+  - API `getFreebets` работает со страницы `/operations` (sessionParams из localStorage)
+  - Выделен `_syncFreebetsInternal()` — переиспользуется из `sync()` и `syncFreebets()`
+  - Файлы freebets хранятся отдельно: `freebets/{siteId}/{clientId}_{alias}.json`
+  - Кнопка «Sync Freebets» на `/bonuses` работает как раньше
+
+### v2.2.0
 - **FreebetCollector (Фаза 16):** модуль сбора фрибетов с `/bonuses`
   - Автозагрузка через API `POST /client/getFreebets` при инициализации
   - SessionParams из `unsafeWindow.localStorage` (обход sandbox Tampermonkey)
