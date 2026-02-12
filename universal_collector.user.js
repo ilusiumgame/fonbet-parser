@@ -16,6 +16,7 @@
 // @grant        unsafeWindow
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
+// @connect      betboom.ru
 // @updateURL    https://raw.githubusercontent.com/ilusiumgame/fonbet-parser/main/universal_collector.user.js
 // @downloadURL  https://raw.githubusercontent.com/ilusiumgame/fonbet-parser/main/universal_collector.user.js
 // @run-at       document-start
@@ -323,8 +324,7 @@
         BET_STATUS_GROUPS: [
             'BET_STATUS_GROUPS_WIN',
             'BET_STATUS_GROUPS_LOSE',
-            'BET_STATUS_GROUPS_RETURN',
-            'BET_STATUS_GROUPS_IN_PROGRESS'
+            'BET_STATUS_GROUPS_PENDING'
         ],
         BETS_PAGE_LIMIT: 30,
         DELAY_BETWEEN_PAGES: 200,
@@ -368,42 +368,58 @@
         INITIAL_RETRY_DELAY: 2000,
         FETCH_TIMEOUT: 30000,
 
-        // === API ===
+        // === API (unsafeWindow.fetch — использует GIB-обёртку страницы, которая добавляет антибот-токены) ===
         async _apiFetch(endpoint, body = {}, retries = null) {
             if (retries === null) retries = this.MAX_RETRIES;
             for (let attempt = 0; attempt <= retries; attempt++) {
                 try {
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), this.FETCH_TIMEOUT);
-                    const resp = await fetch(`/api/access/${endpoint}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(body),
-                        credentials: 'include',
-                        signal: controller.signal
-                    });
-                    clearTimeout(timeoutId);
-                    if (!resp.ok) {
-                        if (resp.status >= 500 && attempt < retries) {
-                            const delay = this.INITIAL_RETRY_DELAY * Math.pow(2, attempt);
-                            logger.warn(`[BetBoomCollector] ${endpoint}: HTTP ${resp.status}, retry ${attempt + 1}/${retries} in ${delay}ms`);
-                            await new Promise(r => setTimeout(r, delay));
-                            continue;
-                        }
-                        throw new Error(`HTTP_${resp.status}`);
-                    }
-                    return resp.json();
+                    const data = await this._pageFetch(endpoint, body);
+                    return data;
                 } catch (e) {
-                    if (e.name === 'AbortError' && attempt < retries) {
+                    if (attempt < retries) {
                         const delay = this.INITIAL_RETRY_DELAY * Math.pow(2, attempt);
-                        logger.warn(`[BetBoomCollector] ${endpoint}: timeout, retry ${attempt + 1}/${retries} in ${delay}ms`);
+                        logger.warn(`[BetBoomCollector] ${endpoint}: ${e.message}, retry ${attempt + 1}/${retries} in ${delay}ms`);
                         await new Promise(r => setTimeout(r, delay));
                         continue;
                     }
-                    if (e.name === 'AbortError') throw new Error('TIMEOUT');
                     throw e;
                 }
             }
+        },
+
+        _pageFetch(endpoint, body) {
+            // Инжектируем <script> в page-контекст — fetch проходит через GIB-обёртку,
+            // результат сохраняется в window и читается через unsafeWindow.
+            const reqId = '_bb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            const bodyJson = JSON.stringify(body);
+
+            const script = document.createElement('script');
+            script.textContent = `(async()=>{try{` +
+                `const r=await fetch('/api/access/${endpoint}',{method:'POST',` +
+                `headers:{'Content-Type':'application/json;charset=UTF-8','x-platform':'web'},` +
+                `credentials:'include',body:${JSON.stringify(bodyJson)}});` +
+                `if(!r.ok)throw new Error('HTTP_'+r.status);` +
+                `window['${reqId}']={data:await r.json()};` +
+                `}catch(e){window['${reqId}']={error:e.message};}})();`;
+            document.head.appendChild(script);
+            script.remove();
+
+            return new Promise((resolve, reject) => {
+                const start = Date.now();
+                const poll = setInterval(() => {
+                    const result = unsafeWindow[reqId];
+                    if (result) {
+                        clearInterval(poll);
+                        delete unsafeWindow[reqId];
+                        if (result.error) reject(new Error(result.error));
+                        else resolve(result.data);
+                    } else if (Date.now() - start > this.FETCH_TIMEOUT) {
+                        clearInterval(poll);
+                        delete unsafeWindow[reqId];
+                        reject(new Error('TIMEOUT'));
+                    }
+                }, 100);
+            });
         },
 
         async _fetchUserInfo() {
@@ -4655,6 +4671,13 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
         XHRInterceptor.originalXHROpen = originalXHROpen;
         XHRInterceptor.originalXHRSend = originalXHRSend;
         XHRInterceptor.originalFetch = originalFetch;
+
+        // BetBoom: НЕ патчим XHR/fetch — GIB антибот детектирует патченные прототипы
+        // и абортит запросы. BetBoomCollector использует прямые XHR без перехвата.
+        if (window.location.hostname === 'betboom.ru') {
+            console.log('✅ [EarlyInit] BetBoom — пропуск патчинга (GIB антибот)');
+            return;
+        }
 
         // Патчим fetch API сразу
         unsafeWindow.fetch = async function(url, options = {}) {
