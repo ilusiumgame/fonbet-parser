@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name         Fonbet & Pari Collector
 // @namespace    http://tampermonkey.net/
-// @version      2.3.0
+// @version      2.4.0
 // @description  Сбор истории ставок и операций с fon.bet и pari.ru с синхронизацией в GitHub
 // @author       ilusiumgame
 // @match        https://fon.bet/account/history/operations
 // @match        https://pari.ru/account/history/operations
 // @match        https://fon.bet/bonuses*
 // @match        https://pari.ru/bonuses*
+// @match        https://betboom.ru/lobby/betshistory*
+// @match        https://betboom.ru/lobby/paymentshistory*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_xmlhttpRequest
@@ -23,7 +25,7 @@
     'use strict';
     // 1. CONSTANTS & CONFIG
 
-    const VERSION = '2.3.0';
+    const VERSION = '2.4.0';
 
     const DEBUG_MODE = false; // Установить в true для отладки
 
@@ -70,6 +72,14 @@
                 apiPattern: /pb06e2-resources/,
                 fallbackApiBase: 'https://clientsapi-lb01-w.pb06e2-resources.com',
                 couponInfoBase: 'https://clientsapi-lb01-w.pb06e2-resources.com'
+            },
+            BETBOOM: {
+                id: 'betboom',
+                name: 'BetBoom',
+                hostname: 'betboom.ru',
+                apiPattern: /betboom\.ru\/api\/access/,
+                fallbackApiBase: null,
+                couponInfoBase: null
             }
         },
 
@@ -111,6 +121,10 @@
 
         getCouponInfoUrl() {
             return (this.currentSite?.couponInfoBase || this.SITES.FONBET.couponInfoBase) + '/coupon/info';
+        },
+
+        isBetBoom() {
+            return this.currentSite?.id === 'betboom';
         }
     };
 
@@ -290,6 +304,266 @@
                 console.error('❌ [FreebetCollector] Ошибка запроса:', error);
                 return false;
             }
+        }
+    };
+
+    // BetBoom Collector Module
+    const BetBoomCollector = {
+        // === State ===
+        gamblerId: null,
+        gamblerName: null,
+        bets: [],
+        payments: [],
+        isCollecting: false,
+        isCompleted: false,
+        error: null,
+        period: null,
+
+        // === Constants ===
+        BET_STATUS_GROUPS: [
+            'BET_STATUS_GROUPS_WIN',
+            'BET_STATUS_GROUPS_LOSE',
+            'BET_STATUS_GROUPS_RETURN',
+            'BET_STATUS_GROUPS_IN_PROGRESS'
+        ],
+        BETS_PAGE_LIMIT: 30,
+        DELAY_BETWEEN_PAGES: 200,
+
+        // === Init ===
+        async init() {
+            logger.info('[BetBoomCollector] Инициализация...');
+            this._loadPeriodSettings();
+            await this.start();
+        },
+
+        _loadPeriodSettings() {
+            const saved = GM_getValue('betboom_period', null);
+            if (saved) {
+                try {
+                    this.period = JSON.parse(saved);
+                } catch (e) {
+                    this.period = null;
+                }
+            }
+            if (!this.period) {
+                const to = new Date();
+                to.setDate(to.getDate() + 1);
+                const from = new Date();
+                from.setFullYear(from.getFullYear() - 1);
+                this.period = {
+                    from: from.toISOString(),
+                    to: to.toISOString()
+                };
+            }
+        },
+
+        savePeriodSettings(fromDate, toDate) {
+            this.period = { from: fromDate, to: toDate };
+            GM_setValue('betboom_period', JSON.stringify(this.period));
+            logger.info(`[BetBoomCollector] Период сохранён: ${fromDate} — ${toDate}`);
+        },
+
+        // === API ===
+        async _apiFetch(endpoint, body = {}) {
+            const resp = await fetch(`/api/access/${endpoint}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+                credentials: 'include'
+            });
+            if (!resp.ok) {
+                throw new Error(`HTTP_${resp.status}`);
+            }
+            return resp.json();
+        },
+
+        async _fetchUserInfo() {
+            const data = await this._apiFetch('user/me');
+            this.gamblerId = data.gambler_id;
+            this.gamblerName = data.personal_data?.full_name || '';
+            logger.info(`[BetBoomCollector] User: ${this.gamblerId} (${this.gamblerName})`);
+        },
+
+        async _fetchAllBets() {
+            let allBets = [];
+            let cursor = '';
+            let page = 0;
+
+            while (true) {
+                page++;
+                const body = {
+                    bet_status_groups: this.BET_STATUS_GROUPS,
+                    before: cursor,
+                    limit: this.BETS_PAGE_LIMIT,
+                    period: {
+                        from: this.period.from,
+                        to: this.period.to
+                    }
+                };
+
+                const data = await this._apiFetch('bets_history/get', body);
+                const bets = data.bets || [];
+                allBets = allBets.concat(bets);
+
+                if (typeof UIPanel !== 'undefined' && UIPanel.elements?.progressStage) {
+                    UIPanel.showProgress(`Загрузка ставок (стр. ${page}, всего ${allBets.length})...`);
+                }
+
+                logger.log(`[BetBoomCollector] Стр. ${page}: +${bets.length} (всего: ${allBets.length})`);
+
+                if (data.is_last_page || bets.length === 0) break;
+
+                cursor = bets[bets.length - 1].create_dttm;
+                await new Promise(r => setTimeout(r, this.DELAY_BETWEEN_PAGES));
+            }
+
+            this.bets = allBets;
+            logger.info(`[BetBoomCollector] Всего ставок: ${allBets.length}`);
+        },
+
+        async _fetchPayments() {
+            if (typeof UIPanel !== 'undefined' && UIPanel.elements?.progressStage) {
+                UIPanel.showProgress('Загрузка платежей...');
+            }
+            const data = await this._apiFetch('payments/get_history', );
+            this.payments = data.payments || data || [];
+            if (!Array.isArray(this.payments)) this.payments = [];
+            logger.info(`[BetBoomCollector] Платежей: ${this.payments.length}`);
+        },
+
+        // === Main flow ===
+        async start() {
+            if (this.isCollecting) return;
+            this.isCollecting = true;
+            this.isCompleted = false;
+            this.error = null;
+            this.bets = [];
+            this.payments = [];
+
+            try {
+                // Step 1: User info
+                if (typeof UIPanel !== 'undefined' && UIPanel.elements?.progressStage) {
+                    UIPanel.showProgress('Получение данных пользователя...');
+                }
+                await this._fetchUserInfo();
+
+                // Step 2: Bets
+                await this._fetchAllBets();
+
+                // Step 3: Payments
+                await this._fetchPayments();
+
+                // Done
+                this.isCompleted = true;
+                AppState.isCollectionCompleted = true;
+                AppState.completionStats = {
+                    totalBets: this.bets.length,
+                    totalPayments: this.payments.length
+                };
+
+                const stats = this.getStats();
+                logger.info(`[BetBoomCollector] Сбор завершён: ${stats.totalBets} ставок, ${stats.totalPayments} платежей, профит: ${stats.profit} ₽`);
+
+                if (typeof UIPanel !== 'undefined') {
+                    UIPanel.showProgress(`Готово: ${stats.totalBets} ставок, ${stats.totalPayments} платежей`);
+                    UIPanel.update();
+                }
+
+                // Auto-sync
+                if (typeof SettingsManager !== 'undefined') {
+                    const settings = SettingsManager.getSettings();
+                    if (settings.sync?.autoSync && typeof GitHubSync !== 'undefined' && GitHubSync.isConfigured()) {
+                        try {
+                            logger.info('[BetBoomCollector] Auto-sync...');
+                            await GitHubSync.syncBetBoom();
+                        } catch (e) {
+                            console.warn('[BetBoomCollector] Auto-sync ошибка:', e.message);
+                        }
+                    }
+                }
+
+            } catch (error) {
+                this.error = error.message;
+                logger.error(`[BetBoomCollector] Ошибка: ${error.message}`);
+                if (typeof UIPanel !== 'undefined' && UIPanel.elements?.progressStage) {
+                    UIPanel.showProgress(`Ошибка: ${error.message}`);
+                }
+            } finally {
+                this.isCollecting = false;
+            }
+        },
+
+        // === Stats ===
+        getStats() {
+            const wins = this.bets.filter(b => b.bet_status?.type === 'BET_STATUS_TYPES_WIN').length;
+            const losses = this.bets.filter(b => b.bet_status?.type === 'BET_STATUS_TYPES_LOSS').length;
+            const returns = this.bets.filter(b =>
+                b.bet_status?.type === 'BET_STATUS_TYPES_RETURN' ||
+                b.bet_status?.type === 'BET_STATUS_TYPES_PARTIAL_RETURN'
+            ).length;
+            const inProgress = this.bets.filter(b =>
+                b.bet_status?.type === 'BET_STATUS_TYPES_IN_PROGRESS'
+            ).length;
+            const sold = this.bets.filter(b => b.bet_status?.type === 'BET_STATUS_TYPES_SOLD').length;
+
+            const deposits = this.payments.filter(p => !p.is_payout);
+            const withdrawals = this.payments.filter(p => p.is_payout);
+
+            const totalStaked = this.bets.reduce((s, b) => s + (b.bet_sum || 0), 0);
+            const totalWon = this.bets.reduce((s, b) => s + (b.bet_win || 0), 0);
+
+            return {
+                totalBets: this.bets.length,
+                wins, losses, returns, inProgress, sold,
+                totalPayments: this.payments.length,
+                deposits: deposits.length,
+                withdrawals: withdrawals.length,
+                depositsSum: deposits.reduce((s, p) => s + (p.amount || 0), 0),
+                withdrawalsSum: withdrawals.reduce((s, p) => s + (p.amount || 0), 0),
+                totalStaked,
+                totalWon,
+                profit: totalWon - totalStaked,
+                isCollecting: this.isCollecting,
+                isCompleted: this.isCompleted
+            };
+        },
+
+        // === Export ===
+        buildExportData() {
+            if (this.bets.length === 0 && this.payments.length === 0) return null;
+
+            const stats = this.getStats();
+            return {
+                version: VERSION,
+                site: 'BetBoom',
+                exportDate: new Date().toISOString(),
+                account: {
+                    siteId: 'betboom',
+                    siteName: 'BetBoom',
+                    gamblerId: this.gamblerId,
+                    gamblerName: this.gamblerName,
+                    alias: (typeof GitHubSync !== 'undefined' ? GitHubSync.accountAlias : '') || ''
+                },
+                period: this.period,
+                summary: {
+                    totalBets: stats.totalBets,
+                    wins: stats.wins,
+                    losses: stats.losses,
+                    returns: stats.returns,
+                    inProgress: stats.inProgress,
+                    sold: stats.sold,
+                    totalPayments: stats.totalPayments,
+                    deposits: stats.deposits,
+                    withdrawals: stats.withdrawals,
+                    depositsSum: stats.depositsSum,
+                    withdrawalsSum: stats.withdrawalsSum,
+                    totalStaked: stats.totalStaked,
+                    totalWon: stats.totalWon,
+                    profit: stats.profit
+                },
+                bets: this.bets,
+                payments: this.payments
+            };
         }
     };
 
@@ -1191,6 +1465,9 @@
         if (url.includes('/bonuses')) {
             return 'bonuses';
         }
+        if (url.includes('/lobby/betshistory') || url.includes('/lobby/paymentshistory')) {
+            return 'betboom';
+        }
         return 'unknown';
     }
 
@@ -1474,6 +1751,11 @@
                 return;
             }
 
+            if (this.pageType === 'betboom') {
+                this._updateBetBoomStats();
+                return;
+            }
+
             const stats = OperationsCollector.getStats();
 
             // Обновляем счётчики (показываем количество собранных операций)
@@ -1496,6 +1778,7 @@
          */
         _getHTML() {
             if (this.pageType === 'bonuses') return this._getFreebetsHTML();
+            if (this.pageType === 'betboom') return this._getBetBoomHTML();
             return this._getOperationsHTML();
         },
 
@@ -1538,6 +1821,115 @@
                     <div class="fc-controls">
                         <button class="fc-btn fc-btn-primary" id="fc-btn-refresh-fb">🔄 Обновить</button>
                         <button class="fc-btn fc-btn-sync" id="fc-btn-sync-fb">📤 Sync Freebets</button>
+                    </div>
+
+                    <div class="fc-sync-status" id="fc-sync-status"></div>
+
+                    <!-- ПРОГРЕСС-БАР -->
+                    <div class="fc-progress-section" id="fc-progress-section" style="display: none;">
+                        <div class="fc-progress-header">
+                            <span class="fc-progress-stage" id="fc-progress-stage"></span>
+                            <span class="fc-progress-percent" id="fc-progress-percent">0%</span>
+                        </div>
+                        <div class="fc-progress-bar">
+                            <div class="fc-progress-fill" id="fc-progress-fill" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <div class="fc-status" id="fc-status"></div>
+                </div>
+            `;
+        },
+
+        _getBetBoomHTML() {
+            const periodFrom = BetBoomCollector.period ? new Date(BetBoomCollector.period.from).toLocaleDateString('ru-RU') : '—';
+            const periodTo = BetBoomCollector.period ? new Date(BetBoomCollector.period.to).toLocaleDateString('ru-RU') : '—';
+            return `
+                <div class="fc-header">
+                    <span class="fc-title">🎯 BetBoom Collector v${VERSION}</span>
+                    <div class="fc-header-buttons">
+                        <button class="fc-btn-icon fc-btn-settings" title="Настройки">⚙️</button>
+                        <button class="fc-btn-icon fc-btn-minimize" title="Свернуть">−</button>
+                        <button class="fc-btn-icon fc-btn-help" title="Справка">?</button>
+                    </div>
+                </div>
+
+                <div class="fc-body">
+                    <div class="fc-mode-indicator">
+                        <span class="fc-mode-emoji">🎯</span>
+                        <span class="fc-mode-name">BetBoom Collector</span>
+                    </div>
+
+                    <div class="fc-divider"></div>
+
+                    <div class="fc-stats">
+                        <div class="fc-stat">
+                            <span class="fc-stat-label">Период:</span>
+                            <span class="fc-stat-value" id="fc-bb-period">${periodFrom} — ${periodTo}</span>
+                        </div>
+                        <div class="fc-stat">
+                            <span class="fc-stat-label">Пользователь:</span>
+                            <span class="fc-stat-value" id="fc-bb-user">—</span>
+                        </div>
+                    </div>
+
+                    <div class="fc-divider"></div>
+
+                    <div class="fc-ops-stats" id="fc-bb-stats">
+                        <div class="fc-ops-header">Ставки</div>
+                        <div class="fc-ops-grid">
+                            <div class="fc-ops-item">
+                                <span class="fc-ops-icon">🎯</span>
+                                <span class="fc-ops-label">Всего:</span>
+                                <span class="fc-ops-value" id="fc-bb-total">0</span>
+                            </div>
+                            <div class="fc-ops-item">
+                                <span class="fc-ops-icon">✅</span>
+                                <span class="fc-ops-label">Выигрыш:</span>
+                                <span class="fc-ops-value" id="fc-bb-wins">0</span>
+                            </div>
+                            <div class="fc-ops-item">
+                                <span class="fc-ops-icon">❌</span>
+                                <span class="fc-ops-label">Проигрыш:</span>
+                                <span class="fc-ops-value" id="fc-bb-losses">0</span>
+                            </div>
+                            <div class="fc-ops-item">
+                                <span class="fc-ops-icon">↩️</span>
+                                <span class="fc-ops-label">Возврат:</span>
+                                <span class="fc-ops-value" id="fc-bb-returns">0</span>
+                            </div>
+                            <div class="fc-ops-item">
+                                <span class="fc-ops-icon">⏳</span>
+                                <span class="fc-ops-label">В игре:</span>
+                                <span class="fc-ops-value" id="fc-bb-progress">0</span>
+                            </div>
+                        </div>
+                        <div class="fc-ops-header" style="margin-top: 8px;">Финансы</div>
+                        <div class="fc-ops-grid">
+                            <div class="fc-ops-item">
+                                <span class="fc-ops-icon">💵</span>
+                                <span class="fc-ops-label">Депозиты:</span>
+                                <span class="fc-ops-value" id="fc-bb-deposits">0</span>
+                            </div>
+                            <div class="fc-ops-item">
+                                <span class="fc-ops-icon">💸</span>
+                                <span class="fc-ops-label">Выводы:</span>
+                                <span class="fc-ops-value" id="fc-bb-withdrawals">0</span>
+                            </div>
+                            <div class="fc-ops-item">
+                                <span class="fc-ops-icon">📈</span>
+                                <span class="fc-ops-label">Профит:</span>
+                                <span class="fc-ops-value" id="fc-bb-profit">0 ₽</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="fc-divider"></div>
+
+                    <div class="fc-controls">
+                        <button class="fc-btn fc-btn-primary" id="fc-btn-bb-restart">🔄 Перезапуск</button>
+                        <button class="fc-btn fc-btn-export-ops" id="fc-btn-bb-export">💰 Экспорт</button>
+                        <button class="fc-btn fc-btn-sync" id="fc-btn-bb-sync">📤 Sync</button>
                     </div>
 
                     <div class="fc-sync-status" id="fc-sync-status"></div>
@@ -2263,6 +2655,21 @@
                 this.elements.fbTotalCount = document.getElementById('fc-fb-total-count');
                 this.elements.btnRefreshFb = document.getElementById('fc-btn-refresh-fb');
                 this.elements.btnSyncFb = document.getElementById('fc-btn-sync-fb');
+            } else if (this.pageType === 'betboom') {
+                // BetBoom-specific elements
+                this.elements.bbTotal = document.getElementById('fc-bb-total');
+                this.elements.bbWins = document.getElementById('fc-bb-wins');
+                this.elements.bbLosses = document.getElementById('fc-bb-losses');
+                this.elements.bbReturns = document.getElementById('fc-bb-returns');
+                this.elements.bbProgress = document.getElementById('fc-bb-progress');
+                this.elements.bbDeposits = document.getElementById('fc-bb-deposits');
+                this.elements.bbWithdrawals = document.getElementById('fc-bb-withdrawals');
+                this.elements.bbProfit = document.getElementById('fc-bb-profit');
+                this.elements.bbPeriod = document.getElementById('fc-bb-period');
+                this.elements.bbUser = document.getElementById('fc-bb-user');
+                this.elements.btnBbRestart = document.getElementById('fc-btn-bb-restart');
+                this.elements.btnBbExport = document.getElementById('fc-btn-bb-export');
+                this.elements.btnBbSync = document.getElementById('fc-btn-bb-sync');
             } else {
                 // Operations-specific elements
                 this.elements.btnStartAll = document.getElementById('fc-btn-start-all');
@@ -2311,6 +2718,26 @@
                 this.elements.btnSyncFb.addEventListener('click', () => {
                     GitHubSync.syncFreebets();
                 });
+            } else if (this.pageType === 'betboom') {
+                // BetBoom: Restart
+                this.elements.btnBbRestart.addEventListener('click', () => {
+                    BetBoomCollector.bets = [];
+                    BetBoomCollector.payments = [];
+                    BetBoomCollector.isCompleted = false;
+                    BetBoomCollector.isCollecting = false;
+                    AppState.isCollectionCompleted = false;
+                    BetBoomCollector.start();
+                });
+
+                // BetBoom: Export
+                this.elements.btnBbExport.addEventListener('click', () => {
+                    this._exportBetBoom();
+                });
+
+                // BetBoom: Sync
+                this.elements.btnBbSync.addEventListener('click', () => {
+                    GitHubSync.syncBetBoom();
+                });
             } else {
                 // Start All
                 this.elements.btnStartAll.addEventListener('click', () => {
@@ -2357,6 +2784,11 @@
             if (this.pageType === 'bonuses') {
                 const stats = FreebetCollector.getStats();
                 return `fb:${stats.total}:${stats.active}:${stats.totalValue}:${GitHubSync.isSyncing}:${GitHubSync.lastSyncResult?.date || ''}`;
+            }
+
+            if (this.pageType === 'betboom') {
+                const stats = BetBoomCollector.getStats();
+                return `bb:${stats.totalBets}:${stats.totalPayments}:${stats.isCollecting}:${stats.isCompleted}:${GitHubSync.isSyncing}:${GitHubSync.lastSyncResult?.date || ''}`;
             }
 
             const s = this.appState;
@@ -2478,6 +2910,59 @@
                 const syncStatus = GitHubSync.getSyncStatus();
                 this.elements.syncStatus.textContent = syncStatus.text;
             }
+        },
+
+        _updateBetBoomStats() {
+            const stats = BetBoomCollector.getStats();
+            if (this.elements.bbTotal) this.elements.bbTotal.textContent = stats.totalBets;
+            if (this.elements.bbWins) this.elements.bbWins.textContent = stats.wins;
+            if (this.elements.bbLosses) this.elements.bbLosses.textContent = stats.losses;
+            if (this.elements.bbReturns) this.elements.bbReturns.textContent = stats.returns;
+            if (this.elements.bbProgress) this.elements.bbProgress.textContent = stats.inProgress;
+            if (this.elements.bbDeposits) this.elements.bbDeposits.textContent = stats.deposits;
+            if (this.elements.bbWithdrawals) this.elements.bbWithdrawals.textContent = stats.withdrawals;
+            if (this.elements.bbProfit) this.elements.bbProfit.textContent = `${stats.profit.toLocaleString('ru-RU')} ₽`;
+            if (this.elements.bbUser && BetBoomCollector.gamblerId) {
+                this.elements.bbUser.textContent = BetBoomCollector.gamblerId;
+            }
+
+            // Обновляем sync status
+            if (this.elements.syncStatus) {
+                const syncStatus = GitHubSync.getSyncStatus();
+                this.elements.syncStatus.textContent = syncStatus.text;
+            }
+
+            // Обновляем состояние кнопок
+            if (this.elements.btnBbExport) {
+                this.elements.btnBbExport.disabled = !stats.isCompleted;
+            }
+            if (this.elements.btnBbSync) {
+                this.elements.btnBbSync.disabled = !stats.isCompleted || !GitHubSync.isConfigured();
+            }
+            if (this.elements.btnBbRestart) {
+                this.elements.btnBbRestart.disabled = stats.isCollecting;
+            }
+        },
+
+        _exportBetBoom() {
+            const data = BetBoomCollector.buildExportData();
+            if (!data) {
+                alert('Нет данных для экспорта');
+                return;
+            }
+
+            const json = JSON.stringify(data, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            a.href = url;
+            a.download = `betboom_${BetBoomCollector.gamblerId}_${timestamp}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            logger.info(`[UIPanel] Экспорт BetBoom: ${data.bets.length} ставок, ${data.payments.length} платежей`);
         },
 
         /**
@@ -2716,6 +3201,23 @@
                             <div class="fc-settings-help">Латиница, цифры, подчёркивание</div>
                         </div>
                     </div>
+
+                    <!-- BETBOOM ПЕРИОД -->
+                    <div class="fc-settings-section" id="fc-settings-betboom-section" style="display: none;">
+                        <div class="fc-settings-section-title">🎯 BetBoom</div>
+
+                        <div class="fc-settings-field">
+                            <label class="fc-settings-label">Период с</label>
+                            <input type="date" class="fc-settings-input" id="setting-bb-period-from">
+                        </div>
+
+                        <div class="fc-settings-field">
+                            <label class="fc-settings-label">Период по</label>
+                            <input type="date" class="fc-settings-input" id="setting-bb-period-to">
+                        </div>
+
+                        <div class="fc-settings-help">Диапазон дат для загрузки истории ставок BetBoom</div>
+                    </div>
                 </div>
 
                 <div class="fc-settings-actions">
@@ -2766,6 +3268,22 @@
             document.getElementById('setting-sync-owner').value = GitHubSync.repoOwner || '';
             document.getElementById('setting-sync-repo').value = GitHubSync.repoName || '';
             document.getElementById('setting-sync-alias').value = GitHubSync.accountAlias || '';
+
+            // BetBoom period
+            const bbSection = document.getElementById('fc-settings-betboom-section');
+            if (bbSection) {
+                if (this.pageType === 'betboom') {
+                    bbSection.style.display = '';
+                    if (BetBoomCollector.period) {
+                        const fromInput = document.getElementById('setting-bb-period-from');
+                        const toInput = document.getElementById('setting-bb-period-to');
+                        if (fromInput) fromInput.value = BetBoomCollector.period.from.slice(0, 10);
+                        if (toInput) toInput.value = BetBoomCollector.period.to.slice(0, 10);
+                    }
+                } else {
+                    bbSection.style.display = 'none';
+                }
+            }
         },
 
         /**
@@ -2802,6 +3320,18 @@
                 repoName: syncRepo || null,
                 accountAlias: syncAlias || null
             });
+
+            // BetBoom period
+            if (this.pageType === 'betboom') {
+                const bbFrom = document.getElementById('setting-bb-period-from')?.value;
+                const bbTo = document.getElementById('setting-bb-period-to')?.value;
+                if (bbFrom && bbTo) {
+                    BetBoomCollector.savePeriodSettings(
+                        new Date(bbFrom).toISOString(),
+                        new Date(bbTo + 'T23:59:59').toISOString()
+                    );
+                }
+            }
 
             if (SettingsManager.saveSettings(settings)) {
                 alert('✅ Настройки сохранены!');
@@ -3238,31 +3768,39 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
         },
 
         // === Merge логика ===
-        _mergeArray(remoteArr, localArr) {
+        _mergeArray(remoteArr, localArr, key = 'marker') {
             const map = new Map();
             let added = 0, updated = 0;
 
             // Сначала добавляем все remote
             (remoteArr || []).forEach(item => {
-                if (item.marker) map.set(item.marker, item);
+                const k = item[key];
+                if (k) map.set(k, item);
             });
 
             const remoteSize = map.size;
 
-            // Затем local — перезапись при совпадении marker
+            // Затем local — перезапись при совпадении key
             (localArr || []).forEach(item => {
-                if (item.marker) {
-                    if (map.has(item.marker)) {
+                const k = item[key];
+                if (k) {
+                    if (map.has(k)) {
                         updated++;
                     } else {
                         added++;
                     }
-                    map.set(item.marker, item);
+                    map.set(k, item);
                 }
             });
 
             // Сортировка по времени (новые первые)
-            const merged = [...map.values()].sort((a, b) => (b.time || 0) - (a.time || 0));
+            const merged = [...map.values()].sort((a, b) => {
+                const timeA = typeof a.time === 'number' ? a.time :
+                    (a.create_dttm ? new Date(a.create_dttm).getTime() / 1000 : 0);
+                const timeB = typeof b.time === 'number' ? b.time :
+                    (b.create_dttm ? new Date(b.create_dttm).getTime() / 1000 : 0);
+                return timeB - timeA;
+            });
             return { merged, added, updated };
         },
 
@@ -3340,6 +3878,60 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
             };
 
             return { merged, stats };
+        },
+
+        _mergeDataBetBoom(remote, local) {
+            const stats = { added: 0, updated: 0 };
+
+            const betsResult = this._mergeArray(remote?.bets, local.bets, 'bet_uid');
+            const paymentsResult = this._mergeArray(remote?.payments, local.payments, 'id');
+
+            stats.added = betsResult.added + paymentsResult.added;
+            stats.updated = betsResult.updated + paymentsResult.updated;
+
+            const betsStats = BetBoomCollector.getStats();
+            const merged = {
+                version: VERSION,
+                account: {
+                    siteId: 'betboom',
+                    siteName: 'BetBoom',
+                    gamblerId: BetBoomCollector.gamblerId,
+                    gamblerName: BetBoomCollector.gamblerName,
+                    alias: this.accountAlias || ''
+                },
+                lastSync: new Date().toISOString(),
+                syncHistory: [
+                    ...(remote?.syncHistory || []),
+                    {
+                        date: new Date().toISOString(),
+                        betsAdded: betsResult.added,
+                        betsUpdated: betsResult.updated,
+                        paymentsAdded: paymentsResult.added,
+                        totalBets: betsResult.merged.length,
+                        totalPayments: paymentsResult.merged.length
+                    }
+                ],
+                period: local.period,
+                summary: {
+                    totalBets: betsResult.merged.length,
+                    wins: betsStats.wins,
+                    losses: betsStats.losses,
+                    returns: betsStats.returns,
+                    inProgress: betsStats.inProgress,
+                    totalPayments: paymentsResult.merged.length,
+                    deposits: betsStats.deposits,
+                    withdrawals: betsStats.withdrawals
+                },
+                bets: betsResult.merged,
+                payments: paymentsResult.merged
+            };
+
+            return { merged, stats };
+        },
+
+        _buildFilePathBetBoom() {
+            const gamblerId = BetBoomCollector.gamblerId || 'unknown';
+            return `betboom/${gamblerId}_${this.accountAlias}.json`;
         },
 
         // === Основной метод sync ===
@@ -3556,6 +4148,107 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
             console.log(`✅ [GitHubSync] Фрибеты синхронизированы: ${stats.active} активных на ${stats.totalValueFormatted}`);
         },
 
+        // === Sync BetBoom ===
+        async syncBetBoom() {
+            if (this.isSyncing) {
+                console.warn('⚠️ [GitHubSync] Синхронизация уже в процессе');
+                return;
+            }
+
+            if (!this.isConfigured()) {
+                this.showSetupDialog();
+                return;
+            }
+
+            if (!BetBoomCollector.isCompleted) {
+                alert('⚠️ Дождитесь завершения сбора данных BetBoom.');
+                return;
+            }
+
+            this.isSyncing = true;
+            console.log('🔄 [GitHubSync] Начинаем синхронизацию BetBoom...');
+
+            try {
+                // Этап 1: Подготовка данных
+                UIPanel.showProgress('Sync 1/4: Подготовка данных...', 25);
+                const localData = BetBoomCollector.buildExportData();
+                if (!localData) {
+                    throw new Error('NO_DATA');
+                }
+
+                // Этап 2: Загрузка из GitHub
+                UIPanel.showProgress('Sync 2/4: Загрузка из GitHub...', 50);
+                const filePath = this._buildFilePathBetBoom();
+                let remoteData = null;
+                let sha = null;
+
+                const file = await this._getFile(filePath);
+                if (file) {
+                    remoteData = file.content;
+                    sha = file.sha;
+                }
+
+                // Этап 3: Объединение данных
+                UIPanel.showProgress('Sync 3/4: Объединение данных...', 75);
+                const { merged, stats: mergeStats } = this._mergeDataBetBoom(remoteData, localData);
+
+                // Этап 4: Сохранение в GitHub
+                UIPanel.showProgress('Sync 4/4: Сохранение в GitHub...', 90);
+                const commitMessage = sha
+                    ? `Update BetBoom ${this.accountAlias}: +${mergeStats.added} new, ${mergeStats.updated} updated`
+                    : `Add BetBoom ${this.accountAlias}: ${merged.summary.totalBets} bets, ${merged.summary.totalPayments} payments`;
+
+                try {
+                    await this._putFile(filePath, merged, sha, commitMessage);
+                } catch (e) {
+                    if (e.message === 'SHA_CONFLICT') {
+                        console.warn('⚠️ [GitHubSync] SHA conflict, retry...');
+                        const freshFile = await this._getFile(filePath);
+                        if (freshFile) {
+                            const { merged: retryMerged } = this._mergeDataBetBoom(freshFile.content, localData);
+                            await this._putFile(filePath, retryMerged, freshFile.sha, commitMessage);
+                        } else {
+                            await this._putFile(filePath, merged, null, commitMessage);
+                        }
+                    } else {
+                        throw e;
+                    }
+                }
+
+                // Успех
+                this.lastSyncResult = {
+                    success: true,
+                    date: new Date().toISOString(),
+                    type: 'betboom',
+                    added: mergeStats.added,
+                    updated: mergeStats.updated,
+                    totalBets: merged.summary.totalBets,
+                    totalPayments: merged.summary.totalPayments
+                };
+
+                UIPanel.showProgress(`✅ Sync: +${mergeStats.added} новых, ${mergeStats.updated} обновлено`, 100);
+                console.log(`✅ [GitHubSync] BetBoom синхронизация завершена: +${mergeStats.added} новых, ${mergeStats.updated} обновлено`);
+
+            } catch (error) {
+                this.lastSyncResult = { success: false, date: new Date().toISOString(), type: 'betboom', error: error.message };
+
+                const messages = {
+                    'INVALID_TOKEN': 'Невалидный GitHub токен. Проверьте настройки.',
+                    'RATE_LIMIT': 'Превышен лимит GitHub API. Повторите через несколько минут.',
+                    'NETWORK_ERROR': 'Ошибка сети. Проверьте подключение.',
+                    'TIMEOUT': 'Таймаут запроса. Повторите попытку.',
+                    'NO_DATA': 'Нет данных для синхронизации.'
+                };
+
+                const msg = messages[error.message] || `Ошибка: ${error.message}`;
+                console.error(`❌ [GitHubSync] ${msg}`);
+                UIPanel.showProgress(`❌ Sync: ${msg}`, 0);
+                alert(`❌ Ошибка синхронизации BetBoom\n\n${msg}`);
+            } finally {
+                this.isSyncing = false;
+            }
+        },
+
         // === Изменение alias ===
         async changeAlias(newAlias) {
             if (!newAlias || !/^[a-zA-Z0-9_]+$/.test(newAlias)) {
@@ -3757,6 +4450,9 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
                     if (this.lastSyncResult.type === 'freebets') {
                         return { state: 'success', text: `Sync: ${formatted} (${this.lastSyncResult.activeFreebets} фрибетов)` };
                     }
+                    if (this.lastSyncResult.type === 'betboom') {
+                        return { state: 'success', text: `Sync: ${formatted} (+${this.lastSyncResult.added}, ${this.lastSyncResult.totalBets} ставок)` };
+                    }
                     return { state: 'success', text: `Sync: ${formatted} (+${this.lastSyncResult.added})` };
                 }
                 return { state: 'error', text: `Ошибка: ${this.lastSyncResult.error}` };
@@ -3823,6 +4519,31 @@ v${VERSION}: Мультисайтовая поддержка + GitHub Sync
             logger.info('✅ Collector инициализирован (Freebets mode)');
             console.log('📝 Доступ из консоли: window.collector');
             console.log('📝 Синхронизация: collector.syncFreebets()\n');
+
+        } else if (pageType === 'betboom') {
+            // Страница BetBoom: инициализируем BetBoomCollector
+            UIPanel.create();
+            BetBoomCollector.init();
+
+            // Экспорт в unsafeWindow для консольного доступа
+            const exportTarget = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+            exportTarget.collector = {
+                version: VERSION,
+                site: SiteDetector.getSiteName(),
+                siteDetector: SiteDetector,
+                state: AppState,
+                betBoomCollector: BetBoomCollector,
+                settingsManager: SettingsManager,
+                githubSync: GitHubSync,
+                sync: () => GitHubSync.syncBetBoom(),
+                changeAlias: (alias) => GitHubSync.changeAlias(alias),
+                exportData: () => UIPanel._exportBetBoom(),
+                uiPanel: UIPanel
+            };
+
+            logger.info('✅ Collector инициализирован (BetBoom mode)');
+            console.log('📝 Доступ из консоли: window.collector');
+            console.log('📝 Синхронизация: collector.sync()\n');
 
         } else {
             // Страница операций: инициализируем все модули

@@ -322,7 +322,7 @@
 () => {
     const stats = collector.operationsCollector.getStats();
     return {
-        hasTotal: typeof stats.total === 'number',
+        hasTotal: typeof stats.totalOperations === 'number',
         hasTotalGroups: typeof stats.totalGroups === 'number',
         hasByCategory: !!stats.byCategory,
         hasRegularBets: typeof stats.byCategory?.regularBets === 'number',
@@ -335,7 +335,7 @@
         hasIsCollecting: typeof stats.isCollecting === 'boolean',
         hasCompleted: typeof stats.completed === 'boolean',
         stats: stats,
-        passed: stats.total >= 0
+        passed: stats.totalOperations >= 0
     };
 }
 ```
@@ -354,11 +354,11 @@
     const operations = collector.operationsCollector.getOperations();
     return {
         totalOperations: operations.length,
-        statsTotal: stats.total,
+        statsTotal: stats.totalOperations,
         isCollecting: stats.isCollecting,
         completed: stats.completed,
-        match: operations.length === stats.total,
-        passed: stats.total > 0 || stats.completed
+        match: operations.length === stats.totalOperations,
+        passed: stats.totalOperations > 0 || stats.completed
     };
 }
 ```
@@ -377,14 +377,14 @@
     if (!stats.completed && stats.isCollecting) {
         return {
             status: 'in_progress',
-            total: stats.total,
+            total: stats.totalOperations,
             message: 'Сбор в процессе, повторите тест позже',
             passed: null
         };
     }
     return {
         status: stats.completed ? 'completed' : 'not_started',
-        total: stats.total,
+        total: stats.totalOperations,
         totalGroups: stats.totalGroups,
         passed: stats.completed
     };
@@ -1098,7 +1098,7 @@
     const result = {
         // Сбор
         collectionCompleted: stats.completed,
-        totalOperations: stats.total,
+        totalOperations: stats.totalOperations,
         totalGroups: stats.totalGroups,
 
         // Дедупликация

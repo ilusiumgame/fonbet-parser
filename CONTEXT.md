@@ -1,8 +1,8 @@
-# Fonbet & Pari Collector
+# Fonbet & Pari & BetBoom Collector
 
-Tampermonkey скрипт для сбора истории операций с fon.bet и pari.ru. Работает на странице `/account/history/operations` (сбор ставок) и `/bonuses` (сбор фрибетов) обоих сайтов. Автоопределение сайта, перехват XHR/fetch, сбор операций через API, группировка по marker, автоматическая загрузка деталей ставок, экспорт в JSON v2.1, инкрементальная синхронизация с GitHub, сбор фрибетов.
+Tampermonkey скрипт для сбора истории операций с fon.bet, pari.ru и betboom.ru. Работает на странице `/account/history/operations` (сбор ставок) и `/bonuses` (сбор фрибетов) для Fonbet/Pari, а также `/lobby/betshistory` и `/lobby/paymentshistory` для BetBoom. Автоопределение сайта, перехват XHR/fetch, сбор операций через API, группировка по marker, автоматическая загрузка деталей ставок, экспорт в JSON v2.1, инкрементальная синхронизация с GitHub, сбор фрибетов.
 
-**Версия:** v2.3.0 — Auto-sync после завершения сбора, объединённый sync freebets
+**Версия:** v2.4.0 — BetBoom support: сбор ставок и платежей, экспорт, GitHub sync
 
 ---
 
@@ -10,37 +10,39 @@ Tampermonkey скрипт для сбора истории операций с f
 
 ```
 Файл:    universal_collector.user.js
-Строки:  ~3988
-Версия:  2.3.0
+Строки:  ~4709
+Версия:  2.4.0
 ```
 
 ---
 
-## Структура кода (v2.2.3)
+## Структура кода (v2.4.0)
 
 ```
-1-20:          Tampermonkey Metadata (@run-at document-start, @match fon.bet + pari.ru
-               /operations + /bonuses, @grant GM_xmlhttpRequest, @connect api.github.com +
+1-22:          Tampermonkey Metadata (@run-at document-start, @match fon.bet + pari.ru
+               /operations + /bonuses + betboom.ru /lobby/betshistory + /lobby/paymentshistory,
+               @grant GM_xmlhttpRequest, @connect api.github.com +
                raw.githubusercontent.com)
 26:            Constants (VERSION, DEBUG_MODE)
 30-48:         logger
 50-53:         URL_PATTERNS (LAST/PREV_OPERATIONS)
-56-115:        SiteDetector (автоопределение сайта)
-118-162:       SegmentMapper (загрузка segment_mappings.json из GitHub Raw)
-165-293:       FreebetCollector (sessionParams из localStorage, auto-fetch, UI на /bonuses)
-296-848:       OperationsCollector (динамические URL через SiteDetector)
-851-1038:      BetsDetailsFetcher (динамический coupon/info URL)
-1042-1141:     SettingsManager
-1143-1146:     LIMITS (UI_UPDATE_INTERVAL_MS)
-1149-1163:     AppState (isInterceptorRunning, isCollectionCompleted, config)
-1170-1179:     getCurrentPageType()
-1183-1399:     XHRInterceptor (LAST/PREV_OPERATIONS)
-1402-2806:     UIPanel (Freebets Collector панель на /bonuses, кнопка Sync, toggle, настройки)
-2809-3015:     ExportModule (_buildExportData + exportOperations, segments в _formatBetGroup)
-3019-3704:     GitHubSync (API, merge, sync, setup dialog, changeAlias)
-3708-3821:     init() (_initCalled + _fcInitialized guards, FreebetCollector.init() на /bonuses)
-3824-3904:     earlyInit() (XHR/fetch патч для operations)
-3906-3916:     Bootstrap
+56-129:        SiteDetector (автоопределение сайта: Fonbet, Pari, BetBoom)
+131-176:       SegmentMapper (загрузка segment_mappings.json из GitHub Raw)
+178-308:       FreebetCollector (sessionParams из localStorage, auto-fetch, UI на /bonuses)
+310-568:       BetBoomCollector (REST API, cursor pagination, bets + payments)
+570-1135:      OperationsCollector (динамические URL через SiteDetector)
+1137-1325:     BetsDetailsFetcher (динамический coupon/info URL)
+1327-1431:     SettingsManager
+1433-1436:     LIMITS (UI_UPDATE_INTERVAL_MS)
+1437-1453:     AppState (isInterceptorRunning, isCollectionCompleted, config)
+1454-1472:     getCurrentPageType()
+1474-1692:     XHRInterceptor (LAST/PREV_OPERATIONS)
+1693-3376:     UIPanel (Operations + Freebets + BetBoom панели, настройки, прогресс)
+3377-3585:     ExportModule (_buildExportData + exportOperations, segments в _formatBetGroup)
+3587-4466:     GitHubSync (API, merge, sync, syncBetBoom, syncFreebets, setup dialog, changeAlias)
+4468-4606:     init() (_initCalled + _fcInitialized guards, BetBoom/FreebetCollector на соотв. страницах)
+4608-4672:     earlyInit() (XHR/fetch патч для operations)
+4674-4684:     Bootstrap
 ```
 
 ---

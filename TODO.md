@@ -1,6 +1,6 @@
-# TODO: Fonbet & Pari Collector v2.3.0
+# TODO: Fonbet & Pari & BetBoom Collector v2.4.0
 
-Мультисайтовый сбор данных с fon.bet и pari.ru. Страницы: `/operations` (история операций), `/bonuses` (фрибеты).
+Мультисайтовый сбор данных с fon.bet, pari.ru и betboom.ru. Страницы: `/operations` (история операций), `/bonuses` (фрибеты), `/lobby/betshistory` и `/lobby/paymentshistory` (BetBoom).
 
 ---
 
@@ -32,6 +32,27 @@
 | Фаза 16.1 | ✅ ВЫПОЛНЕНО | Баг-фиксы FreebetCollector (v2.2.1–v2.2.2) |
 | Фаза 17 | ✅ ВЫПОЛНЕНО | Pari-совместимость: FreebetCollector + бонусы без marker (v2.2.3) |
 | Фаза 18 | ✅ ВЫПОЛНЕНО | Auto-sync + объединённый sync freebets (v2.3.0) |
+| Фаза 19 | ✅ ВЫПОЛНЕНО | BetBoom support: сбор ставок и платежей, экспорт, GitHub sync (v2.4.0) |
+
+---
+
+## Следующие задачи
+
+### F-6.1: Тестирование BetBoom (v2.4.0)
+
+Тестирование через Octo Browser (UUID: `1bb8497860e3436c96196480fcccf422`, gambler_id: `1881653360`).
+
+**Чеклист:**
+- [ ] Открыть `betboom.ru/lobby/betshistory` — UI панель появляется
+- [ ] Автосбор ставок и платежей запускается, прогресс отображается
+- [ ] `window.collector.betBoomCollector.getStats()` — корректные данные
+- [ ] Кнопка "Экспорт" — скачивается JSON с нативным форматом BetBoom
+- [ ] Кнопка "Sync" — данные загружаются в `betboom/{gamblerId}_{alias}.json`
+- [ ] Кнопка "Перезапуск" — повторный сбор работает
+- [ ] Настройки периода сохраняются и применяются
+- [ ] Auto-sync после завершения сбора (если включён)
+- [ ] Регрессия: Fonbet `/operations` работает как раньше
+- [ ] Регрессия: Pari `/bonuses` работает как раньше
 
 ---
 
@@ -351,21 +372,124 @@ Body: {"regId": <marker>, "lang": "ru", "betTypeName": "sport", "fsid": "...", .
 ---
 
 #### F-6. BetBoom — третий сайт
-**Приоритет:** Низкий
-**Статус:** ⬜ Исследование
+**Приоритет:** Средний
+**Статус:** ✅ Исследование завершено, планирование
 
-В тестовом браузере открыта вкладка betboom.ru. Вопросы для исследования:
+#### Результаты исследования (2026-02-12)
 
-- [ ] Использует ли BetBoom тот же бэкенд (единые eventId/segmentId)?
-- [ ] Совместим ли формат API operations/coupon/info?
-- [ ] Какой домен API? (аналог `bk6bba-resources` / `pb06e2-resources`)
-- [ ] Какой префикс localStorage? (аналог `red.*` / `pb.*`)
-- [ ] Есть ли endpoint `getFreebets`?
+**Главный вывод: BetBoom использует ПОЛНОСТЬЮ ДРУГОЙ бэкенд. API несовместим с Fonbet/Pari.**
 
-**Если API совместим:**
-- [ ] Добавить запись в `SiteDetector.sites`
-- [ ] Добавить `@match` для betboom.ru
-- [ ] Добавить папку `betboom/` в структуру GitHub-репозитория
-- [ ] Определить localStorage-префикс для FreebetCollector
+Исследование проведено:
+- [x] Использует ли BetBoom тот же бэкенд? → **НЕТ**, своя архитектура
+- [x] Совместим ли формат API? → **НЕТ**, REST API вместо `clientsapi-*`
+- [x] Какой домен API? → `betboom.ru/api/access/*` (same-origin)
+- [x] Какой префикс localStorage? → **Нет session-ключей**, auth через JWT в cookie `session`
+- [x] Есть ли endpoint `getFreebets`? → `/api/access/marketing_accruals/get_available_bonuses_list`
 
-**Оценка сложности:** Если API идентичен — ~30 минут (по аналогии с pari.ru в Фазе 7). Если API отличается — значительно больше.
+#### Сравнение API
+
+| Аспект | Fonbet / Pari | BetBoom |
+|--------|---------------|---------|
+| API домен | `clientsapi-lb*-w.{domain}` | `betboom.ru/api/access/*` |
+| Модель данных | Операции (placed/won/lost по `marker`) | Ставки (self-contained с ��еталями) |
+| Детали ставки | Отдельный запрос `coupon/info` | **Уже включены** в ответе (`bet_stakes[]`) |
+| Авторизация | `fsid/clientId/sysId` в body | JWT в cookie `session` (автоматически) |
+| Пагинация | `lastOperations` → `prevOperations` chain | Cursor `before` + `limit` + `is_last_page` |
+| ID пользователя | `clientId` (из params) | `gambler_id` (из JWT / `/user/me`) |
+| Статусы | `operationId` коды (1,2,4,7...) | `BET_STATUS_TYPES_WIN/LOSS/...` |
+| Платежи | В потоке операций (69, 90) | Отдельный API `/payments/get_history` |
+| Бонусы | `/client/getFreebets` | `/marketing_accruals/get_available_bonuses_list` |
+| localStorage | `red.*/pb.*` с session params | Нет session-ключей |
+| ID событий | `segmentId`, `eventId` (единые) | `tournament_id`, `match_id` (свои) |
+| Единицы сумм | Копейки (÷100) | Рубли |
+| Сбор данных | XHR перехват | Прямые fetch-запросы |
+
+#### Структура данных BetBoom
+
+**Ставка:**
+```json
+{
+  "bet_id": 730120945,
+  "bet_uid": "e388942f-f350-48b6-ab98-1b63fcf110cb",
+  "bet_status": { "name": "Проигрыш", "type": "BET_STATUS_TYPES_LOSS" },
+  "create_dttm": "2025-12-22T17:23:38.441Z",
+  "result_dttm": "2025-12-22T17:38:23.948Z",
+  "bet_sum": 30000, "possible_win": 57000, "bet_win": 0,
+  "other": {
+    "bet_type": "BET_TYPES_SINGLE", "coeff": 1.9,
+    "bet_stakes": [{
+      "sport_name": "Киберспорт", "category_name": "Dota 2",
+      "tournament_name": "Dota 2. CIS Battle 4",
+      "match_id": 3528285,
+      "home_team_name": "AVULUS", "away_team_name": "Peru Rejects",
+      "market_name": "Тотал убийств на карте", "outcome_name": "Больше 49.5",
+      "coeff": 1.9, "is_live": true, "score": "1:0",
+      "stake_status": { "type": "BET_STAKE_STATUS_TYPES_LOSS" },
+      "result": { "period_scores": [...], "scores": [...] }
+    }]
+  }
+}
+```
+
+**Платёж:**
+```json
+{
+  "id": 421794076, "amount": 346400, "status": "accepted",
+  "is_payout": true,
+  "dttm_begin": "2026-01-05T19:39:47.862Z",
+  "service_name": "Кошелек ЦУПИС"
+}
+```
+
+**Запрос ставок:**
+```json
+POST /api/access/bets_history/get
+{
+  "bet_status_groups": ["BET_STATUS_GROUPS_WIN", "BET_STATUS_GROUPS_LOSE"],
+  "before": "",
+  "limit": 30,
+  "period": { "from": "2025-02-12T...", "to": "2026-02-13T..." }
+}
+```
+
+**Запрос платежей:**
+```json
+POST /api/access/payments/get_history
+{}
+```
+
+**Информация о пользователе:**
+```json
+POST /api/access/user/me → { "gambler_id": 1881653360, "personal_data": { "full_name": "..." } }
+```
+
+#### Тестовый аккаунт BetBoom
+- **gambler_id:** `1881653360`
+- **ФИО:** Соломатин Михаил Валентинович
+- **Страницы:** `/lobby/betshistory` (ставки), `/lobby/paymentshistory` (платежи)
+- **Octo UUID:** `1bb8497860e3436c96196480fcccf422`
+
+#### Плюсы BetBoom API
+- Детали **уже включены** — не нужен BetsDetailsFetcher
+- Простая cursor-пагинация (`before` + `is_last_page`)
+- Auth через cookies — не нужны sessionParams
+- Данные богаче: `tournament_name`, `sport_name`, `score`, `period_scores` (100% разрешение вместо 60% SegmentMapper)
+
+#### Принятые решения
+
+1. **Формат экспорта:** Нативный формат BetBoom с единой структурой верхнего уровня для GitHubSync
+2. **Единицы сумм:** Рубли (не копейки как Fonbet/Pari)
+3. **Scope:** Сбор ставок (`/lobby/betshistory`) + платежи (`/lobby/paymentshistory`)
+4. **Ключ дедупликации:** `bet_uid` (вместо `marker`)
+5. **Архитектура:** Отдельный модуль BetBoomCollector (не SiteDetector integration)
+
+#### План реализации
+
+- [ ] BetBoomCollector — прямые fetch к `/api/access/bets_history/get` с cursor-пагинацией
+- [ ] Нормализация данных — преобразование в формат экспорта
+- [ ] Сбор платежей — `/api/access/payments/get_history`
+- [ ] UI интеграция — панель на `/lobby/betshistory`
+- [ ] GitHubSync — сохранение в папку `betboom/`, merge по `bet_uid`
+- [ ] `@match` для betboom.ru/lobby/betshistory и /lobby/paymentshistory
+
+**Оценка сложности:** Значительно больше, чем pari.ru. Новый модуль ~400-600 строк, плюс адаптация UI/GitHubSync.
