@@ -1954,6 +1954,7 @@
                 // BetBoom: update based on active tab
                 if (this.activeTab === 'operations') {
                     this._updateBetBoomOperationsStats();
+                    this._updateStatus();
                 } else {
                     this._updateBetBoomFreebetsStats();
                 }
@@ -2961,22 +2962,46 @@
          * Обновление статуса
          */
         _updateStatus() {
-            const state = this.appState;
             const status = this.elements.status;
-            const isRunning = state.isInterceptorRunning;
-
-            const states = {
-                'completed': { cls: 'fc-status completed', icon: '✅', text: '', shortText: 'Завершено' },
-                'running': { cls: 'fc-status running', icon: '📡', text: 'Работает (collector)', shortText: 'Работает...' },
-                'stopped': { cls: 'fc-status', icon: '⏸️', text: 'Ожидание запуска...', shortText: 'Ожидание запуска...' }
-            };
+            if (!status) return;
 
             let s;
-            if (state.isCollectionCompleted && state.completionStats) {
-                s = states.completed;
-                s.text = `Сбор завершён: ${state.completionStats.totalOperations} операций, ${state.completionStats.totalGroups} групп`;
+
+            if (this.pageType === 'betboom' || this.pageType === 'betboom-universal') {
+                // BetBoom status
+                const stats = BetBoomCollector.getStats();
+                const states = {
+                    'completed': { cls: 'fc-status completed', icon: '✅', text: '', shortText: 'Завершено' },
+                    'running': { cls: 'fc-status running', icon: '📡', text: 'Работает (BetBoom collector)', shortText: 'Работает...' },
+                    'stopped': { cls: 'fc-status', icon: '⏸️', text: 'Ожидание запуска...', shortText: 'Ожидание запуска...' }
+                };
+
+                if (stats.isCompleted) {
+                    s = states.completed;
+                    const totalOps = stats.totalBets + stats.totalPayments;
+                    s.text = `Сбор завершён: ${totalOps} операций (${stats.totalBets} ставок, ${stats.totalPayments} платежей)`;
+                } else if (stats.isCollecting) {
+                    s = states.running;
+                } else {
+                    s = states.stopped;
+                }
             } else {
-                s = isRunning ? states.running : states.stopped;
+                // Fonbet/Pari status
+                const state = this.appState;
+                const isRunning = state.isInterceptorRunning;
+
+                const states = {
+                    'completed': { cls: 'fc-status completed', icon: '✅', text: '', shortText: 'Завершено' },
+                    'running': { cls: 'fc-status running', icon: '📡', text: 'Работает (collector)', shortText: 'Работает...' },
+                    'stopped': { cls: 'fc-status', icon: '⏸️', text: 'Ожидание запуска...', shortText: 'Ожидание запуска...' }
+                };
+
+                if (state.isCollectionCompleted && state.completionStats) {
+                    s = states.completed;
+                    s.text = `Сбор завершён: ${state.completionStats.totalOperations} операций, ${state.completionStats.totalGroups} групп`;
+                } else {
+                    s = isRunning ? states.running : states.stopped;
+                }
             }
 
             status.className = s.cls;
@@ -2985,6 +3010,10 @@
             // Обновляем fc-stat-status (второй stat в Operations config)
             if (this.elements['fc-stat-status']) {
                 this.elements['fc-stat-status'].textContent = s.shortText;
+            }
+            // Обновляем fc-bb-ops-status (второй stat в BetBoom Operations config)
+            if (this.elements['fc-bb-ops-status']) {
+                this.elements['fc-bb-ops-status'].textContent = s.shortText;
             }
         },
 
