@@ -142,7 +142,7 @@ marker: 12345678905
 
 ## Ключевые модули
 
-### BetBoomCollector (v2.4.0, updated v2.8.2)
+### BetBoomCollector (v2.4.0, updated v2.9.0)
 ```javascript
 const BetBoomCollector = {
     gamblerId: null,
@@ -175,7 +175,7 @@ const BetBoomCollector = {
 //   balance_type: 0 = фрибет-баланс (валюта, не ваучеры), 1 = денежный баланс
 ```
 
-### FreebetCollector (v2.2.0, updated v2.8.1)
+### FreebetCollector (v2.2.0, updated v2.9.0)
 ```javascript
 const FreebetCollector = {
     freebets: [],
@@ -186,10 +186,13 @@ const FreebetCollector = {
     _loadSessionParamsFromStorage(),     // unsafeWindow.localStorage → sessionParams
     handleResponse(data),               // Обработка ответа getFreebets
     getActiveFreebets(),                // Фильтр: state === 'active'
-    getStats(),                         // Расширенная статистика (v2.8.1):
+    getStats(),                         // Расширенная статистика (v2.9.0):
                                         //   active, used, expired, total,
                                         //   totalValue, totalValueFormatted,
-                                        //   minValueFormatted, maxValueFormatted, isLoaded
+                                        //   minValueFormatted, maxValueFormatted,
+                                        //   earliestExpiry, earliestExpiryFormatted, isLoaded
+    _getEarliestExpiry(),               // Находит ближайший expireTime среди активных
+    _formatEarliestExpiry(),            // Форматирует дату истечения
     fetchFreebets(),                    // POST /client/getFreebets
     _buildSyncData()                    // Формирование данных для GitHub sync
 };
@@ -408,7 +411,7 @@ const UIPanel = {
 
 ```javascript
 {
-    "version": "2.8.2",
+    "version": "2.9.0",
     "account": { siteId, siteName, clientId, alias },
     "lastSync": "2026-02-08T14:30:00.000Z",
     "syncHistory": [
@@ -427,7 +430,7 @@ const UIPanel = {
 
 ```javascript
 {
-    "version": "2.8.2",
+    "version": "2.9.0",
     "site": "BetBoom",
     "exportDate": "...",
     "account": {
@@ -491,7 +494,7 @@ betting-data/               (приватный репозиторий)
 
 ## Консольные команды
 
-### Операции (страница /operations, v2.8.1)
+### Операции (страница /operations, v2.9.0)
 ```javascript
 collector.version
 collector.site                                    // Имя текущего сайта
@@ -502,9 +505,9 @@ collector.operationsCollector.getGroupedOperations()
 collector.fetchBetsDetails()
 collector.exportOperations()
 
-// Фрибеты (v2.8.1): доступны на странице операций через табы
+// Фрибеты (v2.9.0): доступны на странице операций через табы
 collector.freebetCollector.isLoaded               // Загружены ли фрибеты
-collector.freebetCollector.getStats()             // Расширенная статистика
+collector.freebetCollector.getStats()             // Расширенная статистика (incl. earliestExpiry)
 collector.freebetCollector.getActiveFreebets()    // Список активных фрибетов
 collector.freebetCollector.fetchFreebets()        // Перезагрузить фрибеты
 collector.syncFreebets()                          // Синхронизировать фрибеты в GitHub
@@ -521,7 +524,7 @@ collector.segmentMapper.loaded                    // Загружены ли м�
 collector.segmentMapper.getName(segmentId)        // Получить название по ID
 ```
 
-### Фрибеты (страница /bonuses, v2.8.1)
+### Фрибеты (страница /bonuses, v2.9.0)
 ```javascript
 collector.freebetCollector.isLoaded               // Загружены ли фрибеты
 collector.freebetCollector.getStats()             // Расширенная статистика (active, used, expired, min/max, total)
