@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Fonbet & Pari Collector
 // @namespace    http://tampermonkey.net/
-// @version      2.5.0
+// @version      2.6.0
 // @description  Сбор истории ставок и операций с fon.bet и pari.ru с синхронизацией в GitHub
 // @author       ilusiumgame
 // @match        https://fon.bet/account/history/operations
@@ -26,7 +26,7 @@
     'use strict';
     // 1. CONSTANTS & CONFIG
 
-    const VERSION = '2.5.0';
+    const VERSION = '2.6.0';
 
     const DEBUG_MODE = false; // Установить в true для отладки
 
@@ -1914,9 +1914,9 @@
                 <div class="fc-header">
                     <span class="fc-title"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAMAAAAp4XiDAAABL1BMVEXIDAAAAAD/////7e3/4+P46en03dnyxMTz1dXppaLjlpPlm5j6+vrijor9/f3hh4PeeXXZX1zaYln+/v7TRUHURj7ROzXQNi79+Pj+/v7OKybOJhzRPzrNJh/LIRrNIBfLGhL////MGA3////trajLGg/JFg3IEAnIDAHBAADJDgHICgDICwH//////Pz++Pj98/L77Oz65OP43t7219b20tH0ysfywsDvt7TurajqoZ3pnJfmkIzmjonjjo/lioXkiIPifnjhenTgdnHfcm/da2TcamrcZl/bX1naWlPYUUnXS0LWRjzUPTPTNy3OIhbNGg/LEwnKDgLJDQDIDQDIDADICgDGCgPICADHBADEBQHGAQDEAADDAADBAADAAAC/AAC+AAC9AAC3AACzAABtw1coAAAALXRSTlPyAAMHCREWJypHSVVoaHV0h5OdrrS7vMjP0tPX3N3c4eHl5u/u8PDw8fHy8/yesYKyAAACSUlEQVR42pXW7VrTMBiA4VQEPyYCfjBlMnFTmWJlczAGihtsKmMMtjWJ7ZqmTfT8j0FKr8V0vpHy/O79423SpMhKur+yWtxExirF/ErOSkJWXG6Nh5xRTA0R6vOQry8qcms15C4m14Qpj/ILCZnLCwCAKCouXJFV6QACzBHrMckJl2SOyqVL8pLj7AQHH26je9wlN4iKRfQowjchOHyK8pzM5DIeRWKmYEySWAFt+ETPYSIcDXrfOkfp+hOS5JfQe6oDX/48adbsf2vL6TAVtIU1wXm3boOdhdNhthBKiaYNVx2z6VNII04wadiGmtyFiCv3bVNHEgPEEWdGEY8CEC+oG8X2iAEEi75tbDd0AULFZ1vV+NrWa/UnGCC+W1OiKaRIxR0CkEgb/kI4BE4nWLaV2OUeyUA8vqfIQUSzEDaqKnIsSRbCz23VIMxCsDhRoj7zvlwHJERblZ3v3Y7W8XACEp/t2KZGDCT8wij2uAcQNQrUoSAAUaNAnUYg8YKGSXwcBiBh46qJNAIPJOHANvVFEohg0TGSnsQQccP9v9u4fZhKLaQiV0cf0z6v3m+RynfSIj76aHpPnnOaCtiW8TEuutBZAueV4suCigPoncKxQnwl6QvZktdfSbnQZcNtYHvAOWIJWW94dApsDzjM/HlkLQrZyjwKlcvxr0LhV0Pb6fh/woneWjGZf/FJkR+CmMM03Lwbk0vzLMvhggmLNu6on6uH5UTUXGaYwWM8QstzliLW/IPHz1+Vy6/fVVRIr1Jae7K0kDz7B0O2kFNj+nSDAAAAAElFTkSuQmCC" class="fc-logo" alt="Fonbet"> Collector v${VERSION} (${SiteDetector.getSiteName()})</span>
                     <div class="fc-header-buttons">
-                        <button class="fc-btn-icon fc-btn-settings" title="Настройки">⚙️</button>
+                        <button class="fc-btn-icon fc-btn-settings" title="Настройки экспорта и синхронизации">⚙️</button>
                         <button class="fc-btn-icon fc-btn-minimize" title="Свернуть">−</button>
-                        <button class="fc-btn-icon fc-btn-help" title="Справка">?</button>
+                        <button class="fc-btn-icon fc-btn-help" title="Справка по использованию">?</button>
                     </div>
                 </div>
 
@@ -1946,8 +1946,8 @@
                     <div class="fc-divider"></div>
 
                     <div class="fc-controls">
-                        <button class="fc-btn fc-btn-primary" id="fc-btn-refresh-fb">🔄 Обновить</button>
-                        <button class="fc-btn fc-btn-sync" id="fc-btn-sync-fb">📤 Sync Freebets</button>
+                        <button class="fc-btn fc-btn-primary" id="fc-btn-refresh-fb" title="Перезагрузить список фрибетов">🔄 Обновить</button>
+                        <button class="fc-btn fc-btn-sync" id="fc-btn-sync-fb" title="Синхронизировать фрибеты с GitHub">📤 Sync Freebets</button>
                     </div>
 
                     <div class="fc-sync-status" id="fc-sync-status"></div>
@@ -1975,9 +1975,9 @@
                 <div class="fc-header">
                     <span class="fc-title">🎯 BetBoom Collector v${VERSION}</span>
                     <div class="fc-header-buttons">
-                        <button class="fc-btn-icon fc-btn-settings" title="Настройки">⚙️</button>
+                        <button class="fc-btn-icon fc-btn-settings" title="Настройки экспорта и синхронизации">⚙️</button>
                         <button class="fc-btn-icon fc-btn-minimize" title="Свернуть">−</button>
-                        <button class="fc-btn-icon fc-btn-help" title="Справка">?</button>
+                        <button class="fc-btn-icon fc-btn-help" title="Справка по использованию">?</button>
                     </div>
                 </div>
 
@@ -2077,9 +2077,9 @@
                     <div class="fc-divider"></div>
 
                     <div class="fc-controls">
-                        <button class="fc-btn fc-btn-primary" id="fc-btn-bb-restart">🔄 Перезапуск</button>
-                        <button class="fc-btn fc-btn-export-ops" id="fc-btn-bb-export">💰 Экспорт</button>
-                        <button class="fc-btn fc-btn-sync" id="fc-btn-bb-sync">📤 Sync</button>
+                        <button class="fc-btn fc-btn-primary" id="fc-btn-bb-restart" title="Перезапустить сбор ставок и платежей">🔄 Перезапуск</button>
+                        <button class="fc-btn fc-btn-export-ops" id="fc-btn-bb-export" title="Скачать ставки и платежи в JSON">💰 Экспорт</button>
+                        <button class="fc-btn fc-btn-sync" id="fc-btn-bb-sync" title="Синхронизировать с GitHub">📤 Sync</button>
                     </div>
 
                     <div class="fc-sync-status" id="fc-sync-status"></div>
@@ -2105,9 +2105,9 @@
                 <div class="fc-header">
                     <span class="fc-title"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAMAAAAp4XiDAAABL1BMVEXIDAAAAAD/////7e3/4+P46en03dnyxMTz1dXppaLjlpPlm5j6+vrijor9/f3hh4PeeXXZX1zaYln+/v7TRUHURj7ROzXQNi79+Pj+/v7OKybOJhzRPzrNJh/LIRrNIBfLGhL////MGA3////trajLGg/JFg3IEAnIDAHBAADJDgHICgDICwH//////Pz++Pj98/L77Oz65OP43t7219b20tH0ysfywsDvt7TurajqoZ3pnJfmkIzmjonjjo/lioXkiIPifnjhenTgdnHfcm/da2TcamrcZl/bX1naWlPYUUnXS0LWRjzUPTPTNy3OIhbNGg/LEwnKDgLJDQDIDQDIDADICgDGCgPICADHBADEBQHGAQDEAADDAADBAADAAAC/AAC+AAC9AAC3AACzAABtw1coAAAALXRSTlPyAAMHCREWJypHSVVoaHV0h5OdrrS7vMjP0tPX3N3c4eHl5u/u8PDw8fHy8/yesYKyAAACSUlEQVR42pXW7VrTMBiA4VQEPyYCfjBlMnFTmWJlczAGihtsKmMMtjWJ7ZqmTfT8j0FKr8V0vpHy/O79423SpMhKur+yWtxExirF/ErOSkJWXG6Nh5xRTA0R6vOQry8qcms15C4m14Qpj/ILCZnLCwCAKCouXJFV6QACzBHrMckJl2SOyqVL8pLj7AQHH26je9wlN4iKRfQowjchOHyK8pzM5DIeRWKmYEySWAFt+ETPYSIcDXrfOkfp+hOS5JfQe6oDX/48adbsf2vL6TAVtIU1wXm3boOdhdNhthBKiaYNVx2z6VNII04wadiGmtyFiCv3bVNHEgPEEWdGEY8CEC+oG8X2iAEEi75tbDd0AULFZ1vV+NrWa/UnGCC+W1OiKaRIxR0CkEgb/kI4BE4nWLaV2OUeyUA8vqfIQUSzEDaqKnIsSRbCz23VIMxCsDhRoj7zvlwHJERblZ3v3Y7W8XACEp/t2KZGDCT8wij2uAcQNQrUoSAAUaNAnUYg8YKGSXwcBiBh46qJNAIPJOHANvVFEohg0TGSnsQQccP9v9u4fZhKLaQiV0cf0z6v3m+RynfSIj76aHpPnnOaCtiW8TEuutBZAueV4suCigPoncKxQnwl6QvZktdfSbnQZcNtYHvAOWIJWW94dApsDzjM/HlkLQrZyjwKlcvxr0LhV0Pb6fh/woneWjGZf/FJkR+CmMM03Lwbk0vzLMvhggmLNu6on6uH5UTUXGaYwWM8QstzliLW/IPHz1+Vy6/fVVRIr1Jae7K0kDz7B0O2kFNj+nSDAAAAAElFTkSuQmCC" class="fc-logo" alt="Fonbet"> Collector v${VERSION} (${SiteDetector.getSiteName()})</span>
                     <div class="fc-header-buttons">
-                        <button class="fc-btn-icon fc-btn-settings" title="Настройки">⚙️</button>
+                        <button class="fc-btn-icon fc-btn-settings" title="Настройки экспорта и синхронизации">⚙️</button>
                         <button class="fc-btn-icon fc-btn-minimize" title="Свернуть">−</button>
-                        <button class="fc-btn-icon fc-btn-help" title="Справка">?</button>
+                        <button class="fc-btn-icon fc-btn-help" title="Справка по использованию">?</button>
                     </div>
                 </div>
 
@@ -2121,10 +2121,10 @@
                     <div class="fc-divider"></div>
 
                     <div class="fc-controls">
-                        <button class="fc-btn fc-btn-primary" id="fc-btn-start-all">Start All</button>
-                        <button class="fc-btn fc-btn-secondary" id="fc-btn-stop-all">Stop All</button>
-                        <button class="fc-btn fc-btn-export-ops" id="fc-btn-export-ops">💰 Экспорт данных</button>
-                        <button class="fc-btn fc-btn-sync" id="fc-btn-sync">🔄 Sync</button>
+                        <button class="fc-btn fc-btn-primary" id="fc-btn-start-all" title="Запустить сбор всех операций">Start All</button>
+                        <button class="fc-btn fc-btn-secondary" id="fc-btn-stop-all" title="Остановить сбор">Stop All</button>
+                        <button class="fc-btn fc-btn-export-ops" id="fc-btn-export-ops" title="Скачать собранные данные в JSON">💰 Экспорт данных</button>
+                        <button class="fc-btn fc-btn-sync" id="fc-btn-sync" title="Синхронизировать с GitHub">🔄 Sync</button>
                     </div>
 
                     <div class="fc-sync-status" id="fc-sync-status"></div>
@@ -3113,9 +3113,11 @@
             const blob = new Blob([json], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            const timestamp = new Date().toISOString().replace(/T/, '_').replace(/:/g, '-').split('.')[0];
+            const cfg = AppState.config.export;
+            const prefix = cfg.USE_CUSTOM_PREFIX ? cfg.CUSTOM_PREFIX : `betboom_${BetBoomCollector.gamblerId}`;
             a.href = url;
-            a.download = `betboom_${BetBoomCollector.gamblerId}_${timestamp}.json`;
+            a.download = cfg.INCLUDE_TIMESTAMP ? `${prefix}_${timestamp}.json` : `${prefix}.json`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -3511,30 +3513,133 @@
         },
 
         /**
-         * Показать справку
+         * Показать справку (модальное окно)
          */
         _showHelp() {
-            const helpText = `
-🎰 Collector v${VERSION} (${SiteDetector.getSiteName()})
+            if (document.getElementById('fc-help-overlay')) return;
 
-Сбор истории операций с fon.bet и pari.ru
+            const overlay = document.createElement('div');
+            overlay.id = 'fc-help-overlay';
+            overlay.className = 'fc-settings-overlay open';
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) this._closeHelp(); });
 
-ИСПОЛЬЗОВАНИЕ:
-1. Откройте страницу /account/history/operations
-2. Нажмите "Start All" для запуска сбора
-3. Дождитесь завершения сбора всех операций
-4. Используйте "Экспорт данных" для скачивания JSON
-5. Используйте "Sync" для синхронизации с GitHub
-
-КОНСОЛЬ: window.collector
-• collector.sync() — синхронизация с GitHub
-• collector.changeAlias('name') — сменить alias
-• collector.exportOperations() — экспорт в файл
-
-v${VERSION}: Мультисайтовая поддержка + GitHub Sync
+            const panel = document.createElement('div');
+            panel.id = 'fc-help-panel';
+            panel.className = 'fc-settings-panel open';
+            panel.innerHTML = `
+                <div class="fc-settings-header">
+                    <div class="fc-settings-title">Collector v${VERSION} — ${SiteDetector.getSiteName()}</div>
+                    <button class="fc-settings-close" id="fc-help-close">✕</button>
+                </div>
+                <div class="fc-settings-body">
+                    ${this._getHelpHTML()}
+                </div>
             `;
 
-            alert(helpText);
+            document.body.appendChild(overlay);
+            document.body.appendChild(panel);
+
+            document.getElementById('fc-help-close').addEventListener('click', () => this._closeHelp());
+        },
+
+        _closeHelp() {
+            const overlay = document.getElementById('fc-help-overlay');
+            const panel = document.getElementById('fc-help-panel');
+            if (overlay) overlay.remove();
+            if (panel) panel.remove();
+        },
+
+        _getHelpHTML() {
+            const siteName = SiteDetector.getSiteName();
+            let usageHTML = '';
+            let consoleHTML = '';
+
+            if (this.pageType === 'betboom') {
+                usageHTML = `
+                    <div class="fc-settings-section">
+                        <div class="fc-settings-section-title">Как пользоваться</div>
+                        <div class="fc-settings-help" style="line-height:1.6">
+                            1. Откройте <b>/lobby/betshistory</b> или <b>/lobby/paymentshistory</b><br>
+                            2. Сбор запускается <b>автоматически</b> при загрузке страницы<br>
+                            3. Период можно изменить в настройках (⚙️)<br>
+                            4. После завершения используйте <b>Экспорт</b> для скачивания JSON<br>
+                            5. Используйте <b>Sync</b> для синхронизации с GitHub
+                        </div>
+                    </div>
+                `;
+                consoleHTML = `
+                    <div class="fc-settings-section">
+                        <div class="fc-settings-section-title">Консольные команды</div>
+                        <div class="fc-settings-help" style="line-height:1.6;font-family:monospace;font-size:11px">
+                            collector.sync() — синхронизация с GitHub<br>
+                            collector.exportData() — экспорт в файл<br>
+                            collector.changeAlias('name') — сменить alias<br>
+                            collector.version — версия скрипта<br>
+                            collector.site — текущий сайт
+                        </div>
+                    </div>
+                `;
+            } else if (this.pageType === 'bonuses') {
+                usageHTML = `
+                    <div class="fc-settings-section">
+                        <div class="fc-settings-section-title">Как пользоваться</div>
+                        <div class="fc-settings-help" style="line-height:1.6">
+                            1. Откройте страницу <b>/bonuses</b><br>
+                            2. Фрибеты загружаются <b>автоматически</b><br>
+                            3. Нажмите <b>Обновить</b> для повторной загрузки<br>
+                            4. Используйте <b>Sync Freebets</b> для синхронизации с GitHub
+                        </div>
+                    </div>
+                `;
+                consoleHTML = `
+                    <div class="fc-settings-section">
+                        <div class="fc-settings-section-title">Консольные команды</div>
+                        <div class="fc-settings-help" style="line-height:1.6;font-family:monospace;font-size:11px">
+                            collector.freebetCollector.getStats() — статистика<br>
+                            collector.freebetCollector.getActiveFreebets() — активные<br>
+                            collector.freebetCollector.fetchFreebets() — перезагрузить<br>
+                            collector.freebetCollector.syncFreebets() — синхронизация
+                        </div>
+                    </div>
+                `;
+            } else {
+                usageHTML = `
+                    <div class="fc-settings-section">
+                        <div class="fc-settings-section-title">Как пользоваться</div>
+                        <div class="fc-settings-help" style="line-height:1.6">
+                            1. Откройте страницу <b>/account/history/operations</b><br>
+                            2. Нажмите <b>Start All</b> для запуска сбора<br>
+                            3. Дождитесь завершения сбора всех операций<br>
+                            4. Используйте <b>Экспорт данных</b> для скачивания JSON<br>
+                            5. Используйте <b>Sync</b> для синхронизации с GitHub
+                        </div>
+                    </div>
+                `;
+                consoleHTML = `
+                    <div class="fc-settings-section">
+                        <div class="fc-settings-section-title">Консольные команды</div>
+                        <div class="fc-settings-help" style="line-height:1.6;font-family:monospace;font-size:11px">
+                            collector.sync() — синхронизация с GitHub<br>
+                            collector.exportOperations() — экспорт в файл<br>
+                            collector.changeAlias('name') — сменить alias<br>
+                            collector.version — версия скрипта<br>
+                            collector.site — текущий сайт
+                        </div>
+                    </div>
+                `;
+            }
+
+            const commonHTML = `
+                <div class="fc-settings-section">
+                    <div class="fc-settings-section-title">GitHub Sync</div>
+                    <div class="fc-settings-help" style="line-height:1.6">
+                        Настройка: ⚙️ → секция Sync → токен, репо, alias<br>
+                        Или через консоль: <span style="font-family:monospace;font-size:11px">collector.githubSync.showSetupDialog()</span>
+                    </div>
+                </div>
+            `;
+
+            return usageHTML + consoleHTML + commonHTML;
         }
     };
     // EXPORT MODULE
