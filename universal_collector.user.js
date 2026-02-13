@@ -230,6 +230,7 @@
             const minVal = activeValues.length ? Math.min(...activeValues) : 0;
             const maxVal = activeValues.length ? Math.max(...activeValues) : 0;
             const totalValue = activeValues.reduce((sum, v) => sum + v, 0);
+            const avgVal = activeValues.length ? totalValue / activeValues.length : 0;
 
             return {
                 total: this.freebets.length,
@@ -238,6 +239,7 @@
                 expired: expired.length,
                 totalValue,
                 totalValueFormatted: `${(totalValue / 100).toLocaleString('ru-RU')} \u20BD`,
+                avgValueFormatted: activeValues.length ? `${(avgVal / 100).toLocaleString('ru-RU')} \u20BD` : '—',
                 minValueFormatted: activeValues.length ? `${(minVal / 100).toLocaleString('ru-RU')} \u20BD` : '—',
                 maxValueFormatted: activeValues.length ? `${(maxVal / 100).toLocaleString('ru-RU')} \u20BD` : '—',
                 earliestExpiry: this._getEarliestExpiry(),
@@ -2042,20 +2044,16 @@
 
         _getFreebetsConfig() {
             return {
-                stats: [
-                    { label: 'Сумма фрибетов:', id: 'fc-fb-sum', defaultValue: '—' },
-                    { label: 'Истекает ближайший:', id: 'fc-fb-expiry', defaultValue: '—' },
-                    { label: 'Активных:', id: 'fc-fb-active-count', defaultValue: '—' }
-                ],
+                stats: [],  // Убираем верхние stats
                 opsGrid: [{
                     header: '🎁 Фрибеты',
                     items: [
-                        { icon: '🎁', label: 'Активные:', id: 'fc-fb-active' },
-                        { icon: '✅', label: 'Использованные:', id: 'fc-fb-used' },
-                        { icon: '⏰', label: 'Истёкшие:', id: 'fc-fb-expired' },
-                        { icon: '💰', label: 'Мин. сумма:', id: 'fc-fb-min' },
+                        { icon: '🎁', label: 'Активных:', id: 'fc-fb-active' },
+                        { icon: '💰', label: 'Общая сумма:', id: 'fc-fb-total-sum' },
+                        { icon: '📊', label: 'Средняя сумма:', id: 'fc-fb-avg' },
                         { icon: '💎', label: 'Макс. сумма:', id: 'fc-fb-max' },
-                        { icon: '📊', label: 'Всего:', id: 'fc-fb-total' }
+                        { icon: '💵', label: 'Мин. сумма:', id: 'fc-fb-min' },
+                        { icon: '⏰', label: 'Истекает:', id: 'fc-fb-expiry' }
                     ]
                 }],
                 buttons: [
@@ -2096,20 +2094,16 @@
 
         _getBetBoomFreebetsConfig() {
             return {
-                stats: [
-                    { label: 'Сумма фрибетов:', id: 'fc-bb-fb-sum', defaultValue: '—' },
-                    { label: 'Истекает ближайший:', id: 'fc-bb-fb-expiry', defaultValue: 'бесконечно' },
-                    { label: 'Активных:', id: 'fc-bb-fb-active', defaultValue: '1 шт' }
-                ],
+                stats: [],  // Убираем верхние stats
                 opsGrid: [{
                     header: '🎁 Фрибеты',
                     items: [
-                        { icon: 'ℹ️', label: 'Детали недоступны', id: 'fc-bb-fb-msg-1', defaultValue: '—' },
-                        { icon: '—', label: 'на BetBoom.', id: 'fc-bb-fb-msg-2', defaultValue: '—' },
-                        { icon: '—', label: 'Доступен только', id: 'fc-bb-fb-msg-3', defaultValue: '—' },
-                        { icon: '—', label: 'общий баланс', id: 'fc-bb-fb-msg-4', defaultValue: '—' },
-                        { icon: '—', label: 'фрибетов.', id: 'fc-bb-fb-msg-5', defaultValue: '—' },
-                        { icon: '—', label: '', id: 'fc-bb-fb-msg-6', defaultValue: '—' }
+                        { icon: '🎁', label: 'Активных:', id: 'fc-bb-fb-active', defaultValue: '1 шт' },
+                        { icon: '💰', label: 'Общая сумма:', id: 'fc-bb-fb-sum', defaultValue: '—' },
+                        { icon: '📊', label: 'Средняя сумма:', id: 'fc-bb-fb-avg', defaultValue: '—' },
+                        { icon: '💎', label: 'Макс. сумма:', id: 'fc-bb-fb-max', defaultValue: '—' },
+                        { icon: '💵', label: 'Мин. сумма:', id: 'fc-bb-fb-min', defaultValue: '—' },
+                        { icon: '⏰', label: 'Истекает:', id: 'fc-bb-fb-expiry', defaultValue: 'бесконечно' }
                     ]
                 }],
                 buttons: [
@@ -3200,24 +3194,13 @@
         _updateFreebetsStats() {
             const stats = FreebetCollector.getStats();
 
-            // 3 stats (new format)
-            if (this.elements['fc-fb-sum']) {
-                this.elements['fc-fb-sum'].textContent = stats.totalValueFormatted;
-            }
-            if (this.elements['fc-fb-expiry']) {
-                this.elements['fc-fb-expiry'].textContent = stats.earliestExpiryFormatted;
-            }
-            if (this.elements['fc-fb-active-count']) {
-                this.elements['fc-fb-active-count'].textContent = stats.active;
-            }
-
-            // 6-item grid (unchanged)
-            if (this.elements['fc-fb-active']) this.elements['fc-fb-active'].textContent = stats.active;
-            if (this.elements['fc-fb-used']) this.elements['fc-fb-used'].textContent = stats.used;
-            if (this.elements['fc-fb-expired']) this.elements['fc-fb-expired'].textContent = stats.expired;
-            if (this.elements['fc-fb-min']) this.elements['fc-fb-min'].textContent = stats.minValueFormatted;
+            // 6-item grid (новый формат)
+            if (this.elements['fc-fb-active']) this.elements['fc-fb-active'].textContent = `${stats.active} шт`;
+            if (this.elements['fc-fb-total-sum']) this.elements['fc-fb-total-sum'].textContent = stats.totalValueFormatted;
+            if (this.elements['fc-fb-avg']) this.elements['fc-fb-avg'].textContent = stats.avgValueFormatted;
             if (this.elements['fc-fb-max']) this.elements['fc-fb-max'].textContent = stats.maxValueFormatted;
-            if (this.elements['fc-fb-total']) this.elements['fc-fb-total'].textContent = stats.total;
+            if (this.elements['fc-fb-min']) this.elements['fc-fb-min'].textContent = stats.minValueFormatted;
+            if (this.elements['fc-fb-expiry']) this.elements['fc-fb-expiry'].textContent = stats.earliestExpiryFormatted;
         },
 
         _updateBetBoomOperationsStats() {
@@ -3256,18 +3239,25 @@
             const stats = BetBoomCollector.getStats();
             const balance = stats.freebetBalance || 0;
 
-            // 3 stats
+            // 6-item grid (новый формат)
+            if (this.elements['fc-bb-fb-active']) {
+                this.elements['fc-bb-fb-active'].textContent = '1 шт';
+            }
             if (this.elements['fc-bb-fb-sum']) {
                 this.elements['fc-bb-fb-sum'].textContent = `${balance.toLocaleString('ru-RU')} ₽`;
+            }
+            if (this.elements['fc-bb-fb-avg']) {
+                this.elements['fc-bb-fb-avg'].textContent = balance > 0 ? `${balance.toLocaleString('ru-RU')} ₽` : '—';
+            }
+            if (this.elements['fc-bb-fb-max']) {
+                this.elements['fc-bb-fb-max'].textContent = balance > 0 ? `${balance.toLocaleString('ru-RU')} ₽` : '—';
+            }
+            if (this.elements['fc-bb-fb-min']) {
+                this.elements['fc-bb-fb-min'].textContent = balance > 0 ? `${balance.toLocaleString('ru-RU')} ₽` : '—';
             }
             if (this.elements['fc-bb-fb-expiry']) {
                 this.elements['fc-bb-fb-expiry'].textContent = 'бесконечно';
             }
-            if (this.elements['fc-bb-fb-active']) {
-                this.elements['fc-bb-fb-active'].textContent = '1 шт';
-            }
-
-            // 6-item grid: placeholder text already set in config, no updates needed
         },
 
         /**
