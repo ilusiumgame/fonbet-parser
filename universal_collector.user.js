@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Fonbet & Pari Collector
 // @namespace    http://tampermonkey.net/
-// @version      2.8.1
+// @version      2.8.2
 // @description  Сбор истории ставок и операций с fon.bet и pari.ru с синхронизацией в GitHub
 // @author       ilusiumgame
 // @match        https://fon.bet/account/history/operations
@@ -26,7 +26,7 @@
     'use strict';
     // 1. CONSTANTS & CONFIG
 
-    const VERSION = '2.8.1';
+    const VERSION = '2.8.2';
 
     const DEBUG_MODE = false; // Установить в true для отладки
 
@@ -330,6 +330,7 @@
         isCompleted: false,
         error: null,
         period: null,
+        balances: null, // { money: 0, freebet: 0 } — из WebSocket accounting_ws
 
         // === Constants ===
         BET_STATUS_GROUPS: [
@@ -344,6 +345,7 @@
         init() {
             logger.info('[BetBoomCollector] Инициализация...');
             this._loadPeriodSettings();
+            this._fetchBalances();
             // start() будет вызван по кнопке ▶ Запуск
         },
 
@@ -372,6 +374,30 @@
             this.period = { from: fromDate, to: toDate };
             GM_setValue('betboom_period', JSON.stringify(this.period));
             logger.info(`[BetBoomCollector] Период сохранён: ${fromDate} — ${toDate}`);
+        },
+
+        // === Balance (from WebSocket accounting_ws, intercepted in earlyInit) ===
+        _fetchBalances() {
+            const poll = setInterval(() => {
+                const balancesArr = unsafeWindow._bbBalances;
+                if (balancesArr) {
+                    clearInterval(poll);
+                    const money = balancesArr.find(b => b.balance_type === 1);
+                    const freebet = balancesArr.find(b => b.balance_type === 0);
+                    this.balances = {
+                        money: money?.value || 0,
+                        freebet: freebet?.value || 0
+                    };
+                    logger.info(`[BetBoomCollector] Балансы: ${this.balances.money} ₽, фрибет: ${this.balances.freebet} Ф`);
+                    if (typeof UIPanel !== 'undefined') UIPanel.update();
+                }
+            }, 500);
+            // Таймаут 15с — если WebSocket не подключился
+            setTimeout(() => {
+                if (!this.balances) {
+                    logger.warn('[BetBoomCollector] Балансы не получены (таймаут)');
+                }
+            }, 15000);
         },
 
         // === Constants (retry) ===
@@ -606,6 +632,8 @@
                 totalStaked,
                 totalWon,
                 profit: totalWon - totalStaked,
+                freebetBalance: this.balances?.freebet || 0,
+                moneyBalance: this.balances?.money || 0,
                 isCollecting: this.isCollecting,
                 isCompleted: this.isCompleted
             };
@@ -2000,7 +2028,8 @@
                 headerTitle: `🎯 BetBoom — v${VERSION}`,
                 stats: [
                     { label: 'Период:', id: 'fc-bb-period', defaultValue: `${periodFrom} — ${periodTo}` },
-                    { label: 'Пользователь:', id: 'fc-bb-user', defaultValue: '—' }
+                    { label: 'Пользователь:', id: 'fc-bb-user', defaultValue: '—' },
+                    { label: 'Фрибет-баланс:', id: 'fc-bb-freebet-balance', defaultValue: '—' }
                 ],
                 opsGrid: [{
                     header: '📊 Статистика',
@@ -3081,6 +3110,11 @@
             if (this.elements['fc-bb-profit']) this.elements['fc-bb-profit'].textContent = `${stats.profit.toLocaleString('ru-RU')} ₽`;
             if (this.elements['fc-bb-user'] && BetBoomCollector.gamblerId) {
                 this.elements['fc-bb-user'].textContent = BetBoomCollector.gamblerId;
+            }
+            if (this.elements['fc-bb-freebet-balance']) {
+                this.elements['fc-bb-freebet-balance'].textContent = BetBoomCollector.balances
+                    ? `${BetBoomCollector.balances.freebet.toLocaleString('ru-RU')} Ф`
+                    : '—';
             }
         },
 
@@ -4979,9 +5013,30 @@
         XHRInterceptor.originalFetch = originalFetch;
 
         // BetBoom: НЕ патчим XHR/fetch — GIB антибот детектирует патченные прототипы
-        // и абортит запросы. BetBoomCollector использует прямые XHR без перехвата.
+        // и абортит запросы. Но WebSocket патчим — GIB его не проверяет.
         if (window.location.hostname === 'betboom.ru') {
-            console.log('✅ [EarlyInit] BetBoom — пропуск патчинга (GIB антибот)');
+            const OrigWS = unsafeWindow.WebSocket;
+            unsafeWindow.WebSocket = function(url, protocols) {
+                const ws = protocols ? new OrigWS(url, protocols) : new OrigWS(url);
+                if (url.includes('accounting_ws')) {
+                    ws.addEventListener('message', (e) => {
+                        try {
+                            const data = JSON.parse(e.data);
+                            if (data.subscribe?.balances) {
+                                unsafeWindow._bbBalances = data.subscribe.balances;
+                                console.log('✅ [EarlyInit] BetBoom балансы перехвачены:', data.subscribe.balances);
+                            }
+                        } catch (ex) {}
+                    });
+                }
+                return ws;
+            };
+            unsafeWindow.WebSocket.prototype = OrigWS.prototype;
+            unsafeWindow.WebSocket.CONNECTING = OrigWS.CONNECTING;
+            unsafeWindow.WebSocket.OPEN = OrigWS.OPEN;
+            unsafeWindow.WebSocket.CLOSING = OrigWS.CLOSING;
+            unsafeWindow.WebSocket.CLOSED = OrigWS.CLOSED;
+            console.log('✅ [EarlyInit] BetBoom — WebSocket патч (XHR/fetch пропущены, GIB антибот)');
             return;
         }
 
