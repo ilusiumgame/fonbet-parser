@@ -1,4 +1,4 @@
-# TODO: Fonbet & Pari & BetBoom Collector v2.6.0
+# TODO: Fonbet & Pari & BetBoom Collector v2.7.0
 
 Мультисайтовый сбор данных с fon.bet, pari.ru и betboom.ru.
 
@@ -21,7 +21,7 @@
 **2. Кастомный префикс экспорта**
 Приоритет: Средний
 
-- [x] Использовать `settings.exportPrefix` в `_exportBetBoom()` (как в Fonbet/Pari)
+- [x] Использовать `settings.exportPrefix` в `ExportModule.exportBetBoom()` (как в Fonbet/Pari)
 
 **3. Активные бонусы BetBoom**
 Приоритет: Низкий (зависит от данных)
@@ -82,7 +82,7 @@
 ## Завершённые фазы
 
 <details>
-<summary>Фазы 1–21 (v1.15.x → v2.6.0) — нажмите чтобы развернуть</summary>
+<summary>Фазы 1–22 (v1.15.x → v2.7.0) — нажмите чтобы развернуть</summary>
 
 | Фаза | Версия | Описание |
 |------|--------|----------|
@@ -108,5 +108,6 @@
 | 19 | v2.4.0 | BetBoom: сбор ставок и платежей, экспорт, GitHub sync |
 | 20 | v2.5.0 | BetBoom parity: категоризация ставок, структурированный экспорт, обогащённый UI |
 | 21 | v2.6.0 | Help-модалка, тултипы на кнопках, BetBoom export prefix |
+| 22 | v2.7.0 | UI рефакторинг: единый шаблон, toggle-кнопка, advanced settings, ExportModule.exportBetBoom (-173 строки) |
 
 </details>
