@@ -1,8 +1,8 @@
 # Fonbet & Pari & BetBoom Collector
 
-Tampermonkey скрипт для сбора истории операций с fon.bet, pari.ru и betboom.ru. Работает на странице `/account/history/operations` (сбор ставок) и `/bonuses` (сбор фрибетов) для Fonbet/Pari, а также `/lobby/betshistory` и `/lobby/paymentshistory` для BetBoom. Автоопределение сайта, перехват XHR/fetch, сбор операций через API, группировка по marker, автоматическая загрузка деталей ставок, экспорт в JSON v2.1, инкрементальная синхронизация с GitHub, сбор фрибетов.
+Tampermonkey скрипт для сбора истории операций с fon.bet, pari.ru и betboom.ru. Работает на **любой странице** всех трёх сайтов (универсальная поддержка). Автоопределение сайта, перехват XHR/fetch, сбор операций через API, группировка по marker, автоматическая загрузка деталей ставок, экспорт в JSON v2.1, инкрементальная синхронизация с GitHub, сбор фрибетов.
 
-**Версия:** v2.7.0 — UI рефакторинг: единый шаблон, toggle-кнопка, advanced settings, ExportModule.exportBetBoom
+**Версия:** v2.9.0 — Универсальная поддержка страниц + унифицированный UI с табами для всех сайтов
 
 ---
 
@@ -10,40 +10,41 @@ Tampermonkey скрипт для сбора истории операций с f
 
 ```
 Файл:    universal_collector.user.js
-Строки:  ~4833
-Версия:  2.7.0
+Строки:  ~5200
+Версия:  2.9.0
 ```
 
 ---
 
-## Структура кода (v2.7.0)
+## Структура кода (v2.9.0)
 
 ```
-1-23:          Tampermonkey Metadata (@run-at document-start, @match fon.bet + pari.ru
-               /operations + /bonuses + betboom.ru /lobby/betshistory + /lobby/paymentshistory,
+1-23:          Tampermonkey Metadata (@run-at document-start, @match fon.bet/* + pari.ru/* +
+               betboom.ru/* — универсальная поддержка всех страниц,
                @grant GM_xmlhttpRequest, @connect api.github.com +
                raw.githubusercontent.com)
 29:            Constants (VERSION, DEBUG_MODE)
 34-57:         logger
 59-131:        SiteDetector (автоопределение сайта: Fonbet, Pari, BetBoom)
 133-178:       SegmentMapper (загрузка segment_mappings.json из GitHub Raw)
-180-315:       FreebetCollector (sessionParams из localStorage, auto-fetch, прогресс-бар, UI на /bonuses)
-316-701:       BetBoomCollector (REST API, cursor pagination, bets + payments)
-702-1268:      OperationsCollector (динамические URL через SiteDetector)
-1269-1459:     BetsDetailsFetcher (динамический coupon/info URL)
-1460-1563:     SettingsManager
-1564-1566:     LIMITS (UI_UPDATE_INTERVAL_MS)
-1570-1590:     AppState (isInterceptorRunning, isCollectionCompleted, config)
-1591-1605:     getCurrentPageType()
-1607-1825:     XHRInterceptor (LAST/PREV_OPERATIONS)
-1826-3432:     UIPanel (единый _buildPanelHTML(config), config-driven cache/events, toggle-кнопка,
-               advanced settings, help-модалка, прогресс)
-3433-3694:     ExportModule (_buildExportData, exportOperations, exportBetBoom, _downloadJSON,
+180-321:       FreebetCollector (sessionParams из localStorage, fetch, earliestExpiry в getStats)
+323-773:       BetBoomCollector (REST API, cursor pagination, bets + payments, WebSocket balances)
+775-1340:      OperationsCollector (динамические URL через SiteDetector)
+1342-1531:     BetsDetailsFetcher (динамический coupon/info URL)
+1533-1635:     SettingsManager
+1637-1641:     LIMITS (UI_UPDATE_INTERVAL_MS)
+1643-1662:     AppState (isInterceptorRunning, isCollectionCompleted, config)
+1664-1678:     getCurrentPageType() (operations/bonuses/betboom/fonbet-pari-universal/betboom-universal)
+1680-1897:     XHRInterceptor (LAST/PREV_OPERATIONS)
+1899-3718:     UIPanel (табы Операции/Фрибеты для ВСЕХ сайтов, унифицированный header,
+               4 stats для Operations, 3 stats для Freebets, config-driven cache/events,
+               toggle-кнопка, help-модалка, прогресс)
+3720-3980:     ExportModule (_buildExportData, exportOperations, exportBetBoom, _downloadJSON,
                segments в _formatBetGroup)
-3695-4603:     GitHubSync (API, merge, sync, syncBetBoom, syncFreebets, setup dialog, changeAlias)
-4604-4733:     init() (_initCalled + _fcInitialized guards, BetBoom/FreebetCollector на соотв. страницах)
-4734-4822:     earlyInit() (XHR/fetch патч для operations)
-4823-4833:     Bootstrap
+3982-4886:     GitHubSync (API, merge, sync, syncBetBoom, syncFreebets, setup dialog, changeAlias)
+4888-5022:     init() (_initCalled + _fcInitialized guards, universal page support)
+5024-5112:     earlyInit() (XHR/fetch патч для operations, WebSocket патч для BetBoom, guard для unknown pages)
+5113-5123:     Bootstrap
 ```
 
 ---
@@ -141,7 +142,7 @@ marker: 12345678905
 
 ## Ключевые модули
 
-### BetBoomCollector (v2.4.0)
+### BetBoomCollector (v2.4.0, updated v2.8.2)
 ```javascript
 const BetBoomCollector = {
     gamblerId: null,
@@ -150,17 +151,19 @@ const BetBoomCollector = {
     isCollecting: false,
     isCompleted: false,
     period: null,
+    balances: null,                      // { money, freebet } — из WebSocket accounting_ws
 
-    async init(),                        // Загрузка периода + start()
+    init(),                              // Загрузка периода + _fetchBalances()
     _loadPeriodSettings(),               // GM_getValue('betboom_period')
     savePeriodSettings(from, to),        // GM_setValue
+    _fetchBalances(),                    // Поллинг unsafeWindow._bbBalances (из earlyInit WS патча)
     async _apiFetch(endpoint, body),     // Retry с exponential backoff
     _pageFetch(endpoint, body),          // Инжекция <script> в page-контекст (GIB антибот)
-    async _fetchUserInfo(),              // /user/get_user_info
+    async _fetchUserInfo(),              // /user/me
     async _fetchAllBets(),               // /bets_history/get (cursor pagination)
     async _fetchPayments(),              // /payments_history/get
     async start(),                       // Полный цикл: userInfo → bets → payments → auto-sync
-    getStats(),                          // Статистика по категориям
+    getStats(),                          // Статистика по категориям + freebetBalance, moneyBalance
     buildExportData(),                   // Формирование данных экспорта
     _formatBet(bet),                     // Форматирование ставки
     _formatPayment(payment)              // Форматирование платежа
@@ -168,25 +171,31 @@ const BetBoomCollector = {
 // API: /api/access/* (POST, JSON, x-platform: web)
 // Антибот: GIB — запросы через <script> инжекцию в page-контекст
 // Ставки по currency_code: RUB (обычные), FREEBET_RUB (фрибеты), BONUS_RUB (бонусные)
+// Балансы: WebSocket wss://ws.betboom.ru:444/api/accounting_ws/v1 (перехват в earlyInit)
+//   balance_type: 0 = фрибет-баланс (валюта, не ваучеры), 1 = денежный баланс
 ```
 
-### FreebetCollector (v2.2.0)
+### FreebetCollector (v2.2.0, updated v2.8.1)
 ```javascript
 const FreebetCollector = {
     freebets: [],
     sessionParams: null,
     isLoaded: false,
 
-    init(),                              // Читает sessionParams из localStorage, auto-fetch
+    init(),                              // Читает sessionParams из localStorage
     _loadSessionParamsFromStorage(),     // unsafeWindow.localStorage → sessionParams
     handleResponse(data),               // Обработка ответа getFreebets
     getActiveFreebets(),                // Фильтр: state === 'active'
-    getStats(),                         // Статистика: active, total, totalAmount
+    getStats(),                         // Расширенная статистика (v2.8.1):
+                                        //   active, used, expired, total,
+                                        //   totalValue, totalValueFormatted,
+                                        //   minValueFormatted, maxValueFormatted, isLoaded
     fetchFreebets(),                    // POST /client/getFreebets
-    syncFreebets()                      // Синхронизация фрибетов в GitHub (overwrite)
+    _buildSyncData()                    // Формирование данных для GitHub sync
 };
 // sessionParams: { fsid, clientId, deviceId, sysId }
 // Ключи localStorage: red.fsid, red.clientId, red.deviceID, red.lastSysId
+// Инициализируется на ОБЕИХ страницах (operations + bonuses) для работы табов
 ```
 
 ### SegmentMapper
@@ -292,40 +301,51 @@ const GitHubSync = {
 };
 ```
 
-### UIPanel (v2.7.0)
+### UIPanel (v2.9.0)
 ```javascript
 const UIPanel = {
     init(appState),
     create(),                        // С guard от дублирования (#fonbet-collector-panel)
-    update(),                        // Вызывает mode-specific update + _updateSyncStatus()
+    update(),                        // Обновляет ОБА таба на Fonbet/Pari, activeTab на BetBoom
+    activeTab: 'operations',         // Текущий активный таб (все сайты)
 
-    // Единый шаблон: config-driven HTML, cache, events
-    _getModeConfig(),                // Выбор конфига по pageType
-    _getOperationsConfig(),          // Конфиг: stats, opsGrid, buttons для operations
-    _getFreebetsConfig(),            // Конфиг для bonuses
-    _getBetBoomConfig(),             // Конфиг для betboom
-    _buildPanelHTML(config),         // Генерация HTML из конфига
+    // Табы (v2.9.0): ВСЕ сайты показывают 2 вкладки (Operations + Freebets)
+    _getModeConfig(),                // Все сайты: {tabs: [...], defaultTab}
+    _getOperationsConfig(),          // Fonbet/Pari: 4 stats + 6-item opsGrid + 3 buttons
+    _getFreebetsConfig(),            // Fonbet/Pari: 3 stats + 6-item opsGrid + 2 buttons
+    _getBetBoomOperationsConfig(),   // BetBoom: 4 stats + 6-item opsGrid + 3 buttons
+    _getBetBoomFreebetsConfig(),     // BetBoom: 3 stats + placeholder grid + 1 button
+    _buildPanelHTML(config),         // Табы для всех сайтов: tab bar + tab contents
+    _buildTabContentHTML(config),    // Генерация stats + opsGrid + buttons для одного таба
+    _switchTab(tabKey),              // Переключение вкладок (display + active class)
 
     // Config-driven кэширование и события
-    _cacheElements(),                // Кэш по ID из конфига (this.elements['fc-bb-total'])
-    _getActionMap(),                 // {buttonId: handler} для каждого режима
-    _attachEventListeners(),         // Цикл по actionMap + общие кнопки
+    _cacheElements(),                // Кэш элементов из ВСЕХ табов
+    _cacheConfigElements(config),    // Helper: кэш stats/buttons/opsGrid по ID из одного конфига
+    _getActionMap(),                 // Fonbet/Pari: actions для обоих табов | BetBoom: actions для обоих табов
+    _attachEventListeners(),         // actionMap + tab click handlers + общие кнопки
 
     // Обновление
-    _updateButtons(),                // Toggle: ▶ Запуск / ⏹ Стоп / 🔄 Перезапуск
-    _updateOpsStats(),               // Статистика operations
-    _updateFreebetsStats(),          // Статистика freebets
-    _updateBetBoomStats(),           // Статистика betboom + кнопки
+    _updateButtons(),                // Обновляет кнопки ОБОИХ табов (все сайты)
+    _updateOpsStats(),               // Статистика operations (Fonbet/Pari) + clientId
+    _updateFreebetsStats(),          // Статистика freebets (Fonbet/Pari): sum, expiry, count + 6-item grid
+    _updateBetBoomOperationsStats(), // Статистика BetBoom operations: 4 stats + 6-item grid
+    _updateBetBoomFreebetsStats(),   // Статистика BetBoom freebets: 3 stats (placeholder grid)
     _updateSyncStatus(),             // Общий sync status для всех режимов
+    _updateStatus(),                 // Статус + fc-stat-status (shortText)
 
-    // На /operations: Toggle (Start/Stop/Restart), Export, Sync
-    // На /bonuses: Обновить, Sync Freebets, прогресс-бар
-    // На /betboom: Перезапуск, Экспорт, Sync
-    // Заголовок: "📊 Операции / 🎁 Фрибеты / 🎯 BetBoom — v{VERSION}"
-    // Help-модалка: контент зависит от pageType
-    // Панель настроек: Export, Advanced (Fetcher), Sync (Token/Owner/Repo/Alias)
-    // Ширина Settings: 340px
-    _handleToggle(),                 // Idle→start, Running→stop, Completed→reload
+    // Табы (все сайты):
+    //   Header: "{emoji} {SiteName} — v{VERSION}" (🎲 Fonbet/Pari, 🎯 BetBoom)
+    //   Tab bar: «📊 Операции» | «🎁 Фрибеты»
+    //   Fonbet/Pari: /operations → Operations tab, /bonuses → Freebets tab
+    //   BetBoom: всегда Operations tab по умолчанию
+    //   На /bonuses: Operations tab buttons disabled, _handleToggle() returns early
+    //   BetBoom Freebets tab: operations buttons disabled
+    // Button IDs: Operations: fc-btn-toggle, fc-btn-export-ops, fc-btn-sync
+    //             Freebets:   fc-btn-toggle-fb (Fonbet/Pari), fc-btn-sync-fb
+    _handleToggle(),                 // Operations: Idle→start, Running→stop, Completed→reload
+    _handleToggleFreebets(),         // Freebets: Idle→fetch, Loaded→reload
+    _handleToggleBetBoom(),          // BetBoom: Idle→start, Collecting→reload, Completed→restart
 };
 ```
 
@@ -335,7 +355,7 @@ const UIPanel = {
 
 ```javascript
 {
-    "version": "2.7.0",
+    "version": "2.9.0",
     "site": "Fonbet",
     "exportDate": "...",
     "account": {
@@ -388,7 +408,7 @@ const UIPanel = {
 
 ```javascript
 {
-    "version": "2.7.0",
+    "version": "2.8.2",
     "account": { siteId, siteName, clientId, alias },
     "lastSync": "2026-02-08T14:30:00.000Z",
     "syncHistory": [
@@ -407,7 +427,7 @@ const UIPanel = {
 
 ```javascript
 {
-    "version": "2.7.0",
+    "version": "2.8.2",
     "site": "BetBoom",
     "exportDate": "...",
     "account": {
@@ -471,7 +491,7 @@ betting-data/               (приватный репозиторий)
 
 ## Консольные команды
 
-### Операции (страница /operations)
+### Операции (страница /operations, v2.8.1)
 ```javascript
 collector.version
 collector.site                                    // Имя текущего сайта
@@ -481,6 +501,13 @@ collector.operationsCollector.getStats()
 collector.operationsCollector.getGroupedOperations()
 collector.fetchBetsDetails()
 collector.exportOperations()
+
+// Фрибеты (v2.8.1): доступны на странице операций через табы
+collector.freebetCollector.isLoaded               // Загружены ли фрибеты
+collector.freebetCollector.getStats()             // Расширенная статистика
+collector.freebetCollector.getActiveFreebets()    // Список активных фрибетов
+collector.freebetCollector.fetchFreebets()        // Перезагрузить фрибеты
+collector.syncFreebets()                          // Синхронизировать фрибеты в GitHub
 
 // Анализ ошибок
 collector.betsDetailsFetcher.getFailedMarkers()
@@ -494,14 +521,14 @@ collector.segmentMapper.loaded                    // Загружены ли м�
 collector.segmentMapper.getName(segmentId)        // Получить название по ID
 ```
 
-### Фрибеты (страница /bonuses, v2.2.0)
+### Фрибеты (страница /bonuses, v2.8.1)
 ```javascript
 collector.freebetCollector.isLoaded               // Загружены ли фрибеты
-collector.freebetCollector.getStats()             // Статистика: active, total, totalAmount
+collector.freebetCollector.getStats()             // Расширенная статистика (active, used, expired, min/max, total)
 collector.freebetCollector.getActiveFreebets()    // Список активных фрибетов
 collector.freebetCollector.fetchFreebets()        // Перезагрузить фрибеты
-collector.freebetCollector.syncFreebets()         // Синхронизировать в GitHub
 collector.freebetCollector.sessionParams          // Текущие параметры сессии
+collector.syncFreebets()                          // Синхронизировать в GitHub
 ```
 
 ### Синхронизация (v2.1.0)

@@ -1,15 +1,12 @@
 // ==UserScript==
 // @name         Fonbet & Pari Collector
 // @namespace    http://tampermonkey.net/
-// @version      2.8.2
+// @version      2.9.0
 // @description  Сбор истории ставок и операций с fon.bet и pari.ru с синхронизацией в GitHub
 // @author       ilusiumgame
-// @match        https://fon.bet/account/history/operations
-// @match        https://pari.ru/account/history/operations
-// @match        https://fon.bet/bonuses*
-// @match        https://pari.ru/bonuses*
-// @match        https://betboom.ru/lobby/betshistory*
-// @match        https://betboom.ru/lobby/paymentshistory*
+// @match        https://fon.bet/*
+// @match        https://pari.ru/*
+// @match        https://betboom.ru/*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_xmlhttpRequest
@@ -26,7 +23,7 @@
     'use strict';
     // 1. CONSTANTS & CONFIG
 
-    const VERSION = '2.8.2';
+    const VERSION = '2.9.0';
 
     const DEBUG_MODE = false; // Установить в true для отладки
 
@@ -243,8 +240,26 @@
                 totalValueFormatted: `${(totalValue / 100).toLocaleString('ru-RU')} \u20BD`,
                 minValueFormatted: activeValues.length ? `${(minVal / 100).toLocaleString('ru-RU')} \u20BD` : '—',
                 maxValueFormatted: activeValues.length ? `${(maxVal / 100).toLocaleString('ru-RU')} \u20BD` : '—',
+                earliestExpiry: this._getEarliestExpiry(),
+                earliestExpiryFormatted: this._formatEarliestExpiry(),
                 isLoaded: this.isLoaded
             };
+        },
+
+        _getEarliestExpiry() {
+            const active = this.getActiveFreebets();
+            if (active.length === 0) return null;
+            const expiries = active
+                .map(fb => fb.expireTime)
+                .filter(t => t != null)
+                .sort((a, b) => a - b);
+            return expiries.length > 0 ? expiries[0] : null;
+        },
+
+        _formatEarliestExpiry() {
+            const expiry = this._getEarliestExpiry();
+            if (!expiry) return '—';
+            return new Date(expiry * 1000).toLocaleDateString('ru-RU');
         },
 
         _buildSyncData() {
@@ -1636,6 +1651,9 @@
      */
     function getCurrentPageType() {
         const url = window.location.href;
+        const site = SiteDetector.currentSite?.id;
+
+        // Specific page detection
         if (url.includes('/account/history/operations')) {
             return 'operations';
         }
@@ -1645,6 +1663,15 @@
         if (url.includes('/lobby/betshistory') || url.includes('/lobby/paymentshistory')) {
             return 'betboom';
         }
+
+        // Universal fallback based on site
+        if (site === 'betboom') {
+            return 'betboom-universal';
+        }
+        if (site === 'fonbet' || site === 'pari') {
+            return 'fonbet-pari-universal';
+        }
+
         return 'unknown';
     }
 
@@ -1923,16 +1950,21 @@
         update() {
             if (!this.elements.panel) return;
 
-            if (this.pageType === 'betboom') {
+            if (this.pageType === 'betboom' || this.pageType === 'betboom-universal') {
+                // BetBoom: update based on active tab
+                if (this.activeTab === 'operations') {
+                    this._updateBetBoomOperationsStats();
+                } else {
+                    this._updateBetBoomFreebetsStats();
+                }
                 this._updateButtons();
-                this._updateBetBoomStats();
                 this._updateSyncStatus();
                 return;
             }
 
             // Fonbet/Pari: обновляем ОБА таба (данные меняются в фоне)
             // Operations tab (только на странице операций — OperationsCollector не инициализирован на /bonuses)
-            if (this.pageType === 'operations') {
+            if (this.pageType === 'operations' || this.pageType === 'fonbet-pari-universal') {
                 const stats = OperationsCollector.getStats();
                 if (this.elements['fc-stat-xhr']) this.elements['fc-stat-xhr'].textContent = stats.totalOperations || 0;
                 this._updateStatus();
@@ -1959,7 +1991,16 @@
         },
 
         _getModeConfig() {
-            if (this.pageType === 'betboom') return this._getBetBoomConfig();
+            if (this.pageType === 'betboom' || this.pageType === 'betboom-universal') {
+                return {
+                    tabs: [
+                        { key: 'operations', label: '📊 Операции', config: this._getBetBoomOperationsConfig() },
+                        { key: 'freebets', label: '🎁 Фрибеты', config: this._getBetBoomFreebetsConfig() }
+                    ],
+                    defaultTab: 'operations'
+                };
+            }
+
             // Fonbet/Pari: табы Operations + Freebets
             return {
                 tabs: [
@@ -1974,7 +2015,9 @@
             return {
                 stats: [
                     { label: 'Операций собрано:', id: 'fc-stat-xhr', defaultValue: '0' },
-                    { label: 'Статус:', id: 'fc-stat-status', defaultValue: 'Ожидание запуска...' }
+                    { label: 'Статус:', id: 'fc-stat-status', defaultValue: 'Ожидание запуска...' },
+                    { label: 'Период:', id: 'fc-stat-period', defaultValue: 'Всё время' },
+                    { label: 'ClientId:', id: 'fc-stat-client-id', defaultValue: '—' }
                 ],
                 opsGrid: [{
                     header: '📊 Операции',
@@ -1999,8 +2042,9 @@
         _getFreebetsConfig() {
             return {
                 stats: [
-                    { label: 'Активных фрибетов:', id: 'fc-fb-active-count', defaultValue: '—' },
-                    { label: 'На сумму:', id: 'fc-fb-total-value', defaultValue: '—' }
+                    { label: 'Сумма фрибетов:', id: 'fc-fb-sum', defaultValue: '—' },
+                    { label: 'Истекает ближайший:', id: 'fc-fb-expiry', defaultValue: '—' },
+                    { label: 'Активных:', id: 'fc-fb-active-count', defaultValue: '—' }
                 ],
                 opsGrid: [{
                     header: '🎁 Фрибеты',
@@ -2021,25 +2065,23 @@
             };
         },
 
-        _getBetBoomConfig() {
-            const periodFrom = BetBoomCollector.period ? new Date(BetBoomCollector.period.from).toLocaleDateString('ru-RU') : '—';
-            const periodTo = BetBoomCollector.period ? new Date(BetBoomCollector.period.to).toLocaleDateString('ru-RU') : '—';
+        _getBetBoomOperationsConfig() {
             return {
-                headerTitle: `🎯 BetBoom — v${VERSION}`,
                 stats: [
-                    { label: 'Период:', id: 'fc-bb-period', defaultValue: `${periodFrom} — ${periodTo}` },
-                    { label: 'Пользователь:', id: 'fc-bb-user', defaultValue: '—' },
-                    { label: 'Фрибет-баланс:', id: 'fc-bb-freebet-balance', defaultValue: '—' }
+                    { label: 'Собрано операций:', id: 'fc-bb-ops-total', defaultValue: '0' },
+                    { label: 'Статус:', id: 'fc-bb-ops-status', defaultValue: 'Ожидание запуска...' },
+                    { label: 'Период:', id: 'fc-bb-ops-period', defaultValue: '—' },
+                    { label: 'GamblerId:', id: 'fc-bb-gambler-id', defaultValue: '—' }
                 ],
                 opsGrid: [{
-                    header: '📊 Статистика',
+                    header: '📊 Операции',
                     items: [
-                        { icon: '🎯', label: 'Всего ставок:', id: 'fc-bb-total' },
-                        { icon: '✅', label: 'Выигрыш:', id: 'fc-bb-wins' },
-                        { icon: '❌', label: 'Проигрыш:', id: 'fc-bb-losses' },
-                        { icon: '💵', label: 'Депозиты:', id: 'fc-bb-deposits' },
-                        { icon: '💸', label: 'Выводы:', id: 'fc-bb-withdrawals' },
-                        { icon: '📈', label: 'Профит:', id: 'fc-bb-profit', defaultValue: '0 ₽' }
+                        { icon: '🎯', label: 'Ставки:', id: 'fc-bb-ops-bets' },
+                        { icon: '⚡', label: 'Быстрые:', id: 'fc-bb-ops-fast' }, // TODO: find fast bets for BetBoom
+                        { icon: '🎁', label: 'Фрибеты:', id: 'fc-bb-ops-freebets' },
+                        { icon: '💵', label: 'Депозиты:', id: 'fc-bb-ops-deposits' },
+                        { icon: '💸', label: 'Выводы:', id: 'fc-bb-ops-withdrawals' },
+                        { icon: '🎰', label: 'Бонусы:', id: 'fc-bb-ops-bonus' }
                     ]
                 }],
                 buttons: [
@@ -2051,8 +2093,33 @@
             };
         },
 
+        _getBetBoomFreebetsConfig() {
+            return {
+                stats: [
+                    { label: 'Сумма фрибетов:', id: 'fc-bb-fb-sum', defaultValue: '—' },
+                    { label: 'Истекает ближайший:', id: 'fc-bb-fb-expiry', defaultValue: 'бесконечно' },
+                    { label: 'Активных:', id: 'fc-bb-fb-active', defaultValue: '1 шт' }
+                ],
+                opsGrid: [{
+                    header: '🎁 Фрибеты',
+                    items: [
+                        { icon: 'ℹ️', label: 'Детали недоступны', id: 'fc-bb-fb-msg-1', defaultValue: '—' },
+                        { icon: '—', label: 'на BetBoom.', id: 'fc-bb-fb-msg-2', defaultValue: '—' },
+                        { icon: '—', label: 'Доступен только', id: 'fc-bb-fb-msg-3', defaultValue: '—' },
+                        { icon: '—', label: 'общий баланс', id: 'fc-bb-fb-msg-4', defaultValue: '—' },
+                        { icon: '—', label: 'фрибетов.', id: 'fc-bb-fb-msg-5', defaultValue: '—' },
+                        { icon: '—', label: '', id: 'fc-bb-fb-msg-6', defaultValue: '—' }
+                    ]
+                }],
+                buttons: [
+                    { id: 'fc-btn-sync-fb', className: 'fc-btn fc-btn-sync', title: 'Синхронизировать с GitHub', text: '📤 Sync' }
+                ],
+                showProgressDetails: false
+            };
+        },
+
         _buildPanelHTML(config) {
-            // Tabbed mode (Fonbet/Pari)
+            // Tabbed mode (all sites now)
             if (config.tabs) {
                 this.activeTab = config.defaultTab;
                 const tabBarHTML = config.tabs.map(t =>
@@ -2064,9 +2131,12 @@
                     return `<div class="fc-tab-content" data-tab="${t.key}" style="display: ${display};">${this._buildTabContentHTML(t.config)}</div>`;
                 }).join('');
 
+                const siteEmoji = this.pageType.includes('betboom') ? '🎯' : '🎲';
+                const siteName = SiteDetector.getSiteName();
+
                 return `
                 <div class="fc-header">
-                    <span class="fc-title"><img src="${this._FONBET_LOGO}" class="fc-logo" alt="Fonbet"> Collector — v${VERSION}</span>
+                    <span class="fc-title">${siteEmoji} ${siteName} — v${VERSION}</span>
                     <div class="fc-header-buttons">
                         <button class="fc-btn-icon fc-btn-settings" title="Настройки экспорта и синхронизации">⚙️</button>
                         <button class="fc-btn-icon fc-btn-minimize" title="Свернуть">−</button>
@@ -2092,32 +2162,8 @@
                 `;
             }
 
-            // Single mode (BetBoom)
-            return `
-                <div class="fc-header">
-                    <span class="fc-title">${config.headerTitle}</span>
-                    <div class="fc-header-buttons">
-                        <button class="fc-btn-icon fc-btn-settings" title="Настройки экспорта и синхронизации">⚙️</button>
-                        <button class="fc-btn-icon fc-btn-minimize" title="Свернуть">−</button>
-                        <button class="fc-btn-icon fc-btn-help" title="Справка по использованию">?</button>
-                    </div>
-                </div>
-                <div class="fc-body">
-                    ${this._buildTabContentHTML(config)}
-                    <div class="fc-sync-status" id="fc-sync-status"></div>
-                    <div class="fc-progress-section" id="fc-progress-section" style="display: none;">
-                        <div class="fc-progress-header">
-                            <span class="fc-progress-stage" id="fc-progress-stage"></span>
-                            <span class="fc-progress-percent" id="fc-progress-percent">0%</span>
-                        </div>
-                        <div class="fc-progress-bar">
-                            <div class="fc-progress-fill" id="fc-progress-fill" style="width: 0%"></div>
-                        </div>
-                        ${config.showProgressDetails ? '<div class="fc-progress-details" id="fc-progress-details">Загрузка деталей: <span id="fc-details-loaded">0</span> / <span id="fc-details-total">0</span></div>' : ''}
-                    </div>
-                    <div class="fc-status" id="fc-status"></div>
-                </div>
-            `;
+            // Fallback (should not reach here)
+            return '';
         },
 
         _buildTabContentHTML(config) {
@@ -2827,11 +2873,14 @@
          * Добавление обработчиков событий
          */
         _getActionMap() {
-            if (this.pageType === 'betboom') {
+            if (this.pageType === 'betboom' || this.pageType === 'betboom-universal') {
                 return {
+                    // Operations tab
                     'fc-btn-toggle': () => this._handleToggleBetBoom(),
                     'fc-btn-export-ops': () => ExportModule.exportBetBoom(),
-                    'fc-btn-sync': () => GitHubSync.syncBetBoom()
+                    'fc-btn-sync': () => GitHubSync.syncBetBoom(),
+                    // Freebets tab
+                    'fc-btn-sync-fb': () => GitHubSync.syncBetBoom()
                 };
             }
             // Fonbet/Pari: actions для обоих табов
@@ -2944,8 +2993,10 @@
          */
         _updateButtons() {
             // BetBoom mode
-            if (this.pageType === 'betboom') {
+            if (this.pageType === 'betboom' || this.pageType === 'betboom-universal') {
                 const stats = BetBoomCollector.getStats();
+
+                // Operations tab buttons
                 const btnToggle = this.elements['fc-btn-toggle'];
                 if (btnToggle) {
                     if (stats.isCompleted) {
@@ -2977,6 +3028,28 @@
                         btnSync.textContent = '📤 Sync';
                     }
                 }
+
+                // Freebets tab buttons
+                const btnSyncFb = this.elements['fc-btn-sync-fb'];
+                if (btnSyncFb) {
+                    const canSync = stats.isCompleted && !GitHubSync.isSyncing;
+                    btnSyncFb.disabled = !canSync;
+                    if (GitHubSync.isSyncing) {
+                        btnSyncFb.classList.add('syncing');
+                        btnSyncFb.textContent = '⏳ Syncing...';
+                    } else {
+                        btnSyncFb.classList.remove('syncing');
+                        btnSyncFb.textContent = '📤 Sync';
+                    }
+                }
+
+                // Disable operations buttons on freebets tab
+                if (this.activeTab === 'freebets') {
+                    if (btnToggle) btnToggle.disabled = true;
+                    if (btnExport) btnExport.disabled = true;
+                    if (btnSync) btnSync.disabled = true;
+                }
+
                 return;
             }
 
@@ -3086,12 +3159,30 @@
             if (this.elements['fc-ops-bonus']) {
                 this.elements['fc-ops-bonus'].textContent = stats.byCategory?.bonus || 0;
             }
+
+            // NEW: Update clientId stat
+            if (this.elements['fc-stat-client-id']) {
+                const clientId = OperationsCollector.sessionParams?.clientId ||
+                                FreebetCollector.sessionParams?.clientId;
+                this.elements['fc-stat-client-id'].textContent = clientId || '—';
+            }
         },
 
         _updateFreebetsStats() {
             const stats = FreebetCollector.getStats();
-            if (this.elements['fc-fb-active-count']) this.elements['fc-fb-active-count'].textContent = stats.active;
-            if (this.elements['fc-fb-total-value']) this.elements['fc-fb-total-value'].textContent = stats.totalValueFormatted;
+
+            // 3 stats (new format)
+            if (this.elements['fc-fb-sum']) {
+                this.elements['fc-fb-sum'].textContent = stats.totalValueFormatted;
+            }
+            if (this.elements['fc-fb-expiry']) {
+                this.elements['fc-fb-expiry'].textContent = stats.earliestExpiryFormatted;
+            }
+            if (this.elements['fc-fb-active-count']) {
+                this.elements['fc-fb-active-count'].textContent = stats.active;
+            }
+
+            // 6-item grid (unchanged)
             if (this.elements['fc-fb-active']) this.elements['fc-fb-active'].textContent = stats.active;
             if (this.elements['fc-fb-used']) this.elements['fc-fb-used'].textContent = stats.used;
             if (this.elements['fc-fb-expired']) this.elements['fc-fb-expired'].textContent = stats.expired;
@@ -3100,22 +3191,54 @@
             if (this.elements['fc-fb-total']) this.elements['fc-fb-total'].textContent = stats.total;
         },
 
-        _updateBetBoomStats() {
+        _updateBetBoomOperationsStats() {
             const stats = BetBoomCollector.getStats();
-            if (this.elements['fc-bb-total']) this.elements['fc-bb-total'].textContent = stats.totalBets;
-            if (this.elements['fc-bb-wins']) this.elements['fc-bb-wins'].textContent = stats.wins;
-            if (this.elements['fc-bb-losses']) this.elements['fc-bb-losses'].textContent = stats.losses;
-            if (this.elements['fc-bb-deposits']) this.elements['fc-bb-deposits'].textContent = stats.deposits;
-            if (this.elements['fc-bb-withdrawals']) this.elements['fc-bb-withdrawals'].textContent = stats.withdrawals;
-            if (this.elements['fc-bb-profit']) this.elements['fc-bb-profit'].textContent = `${stats.profit.toLocaleString('ru-RU')} ₽`;
-            if (this.elements['fc-bb-user'] && BetBoomCollector.gamblerId) {
-                this.elements['fc-bb-user'].textContent = BetBoomCollector.gamblerId;
+            const totalOps = stats.totalBets + stats.totalPayments;
+
+            // 4 stats
+            if (this.elements['fc-bb-ops-total']) {
+                this.elements['fc-bb-ops-total'].textContent = totalOps;
             }
-            if (this.elements['fc-bb-freebet-balance']) {
-                this.elements['fc-bb-freebet-balance'].textContent = BetBoomCollector.balances
-                    ? `${BetBoomCollector.balances.freebet.toLocaleString('ru-RU')} Ф`
-                    : '—';
+            if (this.elements['fc-bb-ops-status']) {
+                const statusText = stats.isCompleted ? 'Завершено' :
+                                  stats.isCollecting ? 'Работает...' :
+                                  'Ожидание запуска...';
+                this.elements['fc-bb-ops-status'].textContent = statusText;
             }
+            if (this.elements['fc-bb-ops-period']) {
+                const periodFrom = BetBoomCollector.period ? new Date(BetBoomCollector.period.from).toLocaleDateString('ru-RU') : '—';
+                const periodTo = BetBoomCollector.period ? new Date(BetBoomCollector.period.to).toLocaleDateString('ru-RU') : '—';
+                this.elements['fc-bb-ops-period'].textContent = `${periodFrom} — ${periodTo}`;
+            }
+            if (this.elements['fc-bb-gambler-id']) {
+                this.elements['fc-bb-gambler-id'].textContent = BetBoomCollector.gamblerId || '—';
+            }
+
+            // 6-item grid (unified categories)
+            if (this.elements['fc-bb-ops-bets']) this.elements['fc-bb-ops-bets'].textContent = stats.regularBets || 0;
+            if (this.elements['fc-bb-ops-fast']) this.elements['fc-bb-ops-fast'].textContent = '0'; // TODO: find fast bets
+            if (this.elements['fc-bb-ops-freebets']) this.elements['fc-bb-ops-freebets'].textContent = stats.freebetBets || 0;
+            if (this.elements['fc-bb-ops-deposits']) this.elements['fc-bb-ops-deposits'].textContent = stats.deposits || 0;
+            if (this.elements['fc-bb-ops-withdrawals']) this.elements['fc-bb-ops-withdrawals'].textContent = stats.withdrawals || 0;
+            if (this.elements['fc-bb-ops-bonus']) this.elements['fc-bb-ops-bonus'].textContent = stats.bonusBets || 0;
+        },
+
+        _updateBetBoomFreebetsStats() {
+            const stats = BetBoomCollector.getStats();
+            const balance = stats.freebetBalance || 0;
+
+            // 3 stats
+            if (this.elements['fc-bb-fb-sum']) {
+                this.elements['fc-bb-fb-sum'].textContent = `${balance.toLocaleString('ru-RU')} ₽`;
+            }
+            if (this.elements['fc-bb-fb-expiry']) {
+                this.elements['fc-bb-fb-expiry'].textContent = 'бесконечно';
+            }
+            if (this.elements['fc-bb-fb-active']) {
+                this.elements['fc-bb-fb-active'].textContent = '1 шт';
+            }
+
+            // 6-item grid: placeholder text already set in config, no updates needed
         },
 
         /**
@@ -4939,6 +5062,44 @@
             console.log('📝 Доступ из консоли: window.collector');
             console.log('📝 Синхронизация: collector.sync()\n');
 
+        } else if (pageType === 'fonbet-pari-universal' || pageType === 'betboom-universal') {
+            // Universal pages (not on specific operations/bonuses pages)
+            logger.log(`[Init] Universal page mode: ${pageType}`);
+
+            if (pageType === 'fonbet-pari-universal') {
+                FreebetCollector.init();
+                ExportModule.init(AppState);
+            } else {
+                BetBoomCollector.init();
+            }
+
+            UIPanel.create();
+
+            // Console exports
+            const exportTarget = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+            exportTarget.collector = {
+                version: VERSION,
+                site: SiteDetector.getSiteName(),
+                siteDetector: SiteDetector,
+                state: AppState,
+                settingsManager: SettingsManager,
+                githubSync: GitHubSync,
+                changeAlias: (alias) => GitHubSync.changeAlias(alias),
+                uiPanel: UIPanel
+            };
+
+            if (pageType === 'fonbet-pari-universal') {
+                exportTarget.collector.freebetCollector = FreebetCollector;
+                exportTarget.collector.syncFreebets = () => GitHubSync.syncFreebets();
+            } else {
+                exportTarget.collector.betBoomCollector = BetBoomCollector;
+                exportTarget.collector.sync = () => GitHubSync.syncBetBoom();
+                exportTarget.collector.exportData = () => ExportModule.exportBetBoom();
+            }
+
+            logger.info(`✅ Collector инициализирован (Universal mode: ${pageType})`);
+            console.log('📝 Доступ из консоли: window.collector\n');
+
         } else {
             // Страница операций: инициализируем все модули
             XHRInterceptor.init(AppState);
@@ -5001,6 +5162,12 @@
 
     // РАННЯЯ инициализация: патчим fetch/XHR сразу (до загрузки страницы)
     function earlyInit() {
+        const pageType = getCurrentPageType();
+        if (pageType === 'unknown') {
+            logger.log('[earlyInit] Unknown page, skipping initialization');
+            return;
+        }
+
         console.log('🚀 [EarlyInit] Патчинг API перед загрузкой страницы...');
 
         // Сохраняем оригиналы
