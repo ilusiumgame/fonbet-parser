@@ -139,6 +139,35 @@ marker: 12345678905
 
 ## Ключевые модули
 
+### BetBoomCollector (v2.4.0)
+```javascript
+const BetBoomCollector = {
+    gamblerId: null,
+    bets: [],
+    payments: [],
+    isCollecting: false,
+    isCompleted: false,
+    period: null,
+
+    async init(),                        // Загрузка периода + start()
+    _loadPeriodSettings(),               // GM_getValue('betboom_period')
+    savePeriodSettings(from, to),        // GM_setValue
+    async _apiFetch(endpoint, body),     // Retry с exponential backoff
+    _pageFetch(endpoint, body),          // Инжекция <script> в page-контекст (GIB антибот)
+    async _fetchUserInfo(),              // /user/get_user_info
+    async _fetchAllBets(),               // /bets_history/get (cursor pagination)
+    async _fetchPayments(),              // /payments_history/get
+    async start(),                       // Полный цикл: userInfo → bets → payments → auto-sync
+    getStats(),                          // Статистика по категориям
+    buildExportData(),                   // Формирование данных экспорта
+    _formatBet(bet),                     // Форматирование ставки
+    _formatPayment(payment)              // Форматирование платежа
+};
+// API: /api/access/* (POST, JSON, x-platform: web)
+// Антибот: GIB — запросы через <script> инжекцию в page-контекст
+// Ставки по currency_code: RUB (обычные), FREEBET_RUB (фрибеты), BONUS_RUB (бонусные)
+```
+
 ### FreebetCollector (v2.2.0)
 ```javascript
 const FreebetCollector = {
@@ -221,7 +250,7 @@ _formatFinanceOp(group) // Форматирование финансовых о�
 _formatBonusOp(group)   // Форматирование бонусов
 ```
 
-### GitHubSync (v2.1.0)
+### GitHubSync (v2.1.0+)
 ```javascript
 const GitHubSync = {
     // Конфигурация (GM_setValue)
@@ -239,13 +268,17 @@ const GitHubSync = {
     // Поиск и путь файла
     _findExistingFile(),             // Поиск {clientId}_*.json в {siteId}/
     _buildFilePath(existingFile),    // {siteId}/{clientId}_{alias}.json
+    _buildFilePathBetBoom(),         // betboom/{gamblerId}_{alias}.json
 
     // Merge логика
     _mergeArray(remote, local),      // Merge по marker, local перезаписывает
     _mergeData(remote, local),       // Полный merge всех категорий + syncHistory
+    _mergeDataBetBoom(remote, local), // Merge BetBoom по bet_uid / id
 
-    // Основной метод
-    async sync(),                    // 4 этапа: подготовка → GET → merge → PUT
+    // Основные методы
+    async sync(),                    // Fonbet/Pari: 4 этапа: подготовка → GET → merge → PUT
+    async syncBetBoom(),             // BetBoom: аналогичный 4-этапный sync
+    async syncFreebets(),            // Фрибеты: overwrite в GitHub
     async changeAlias(newAlias),     // Переименование файла в GitHub
     async testConnection(),          // Проверка подключения к репо
 
@@ -275,11 +308,11 @@ const UIPanel = {
 
 ---
 
-## Формат экспорта JSON v2.1
+## Формат экспорта JSON v2.1 (Fonbet/Pari)
 
 ```javascript
 {
-    "version": "2.2.3",
+    "version": "2.6.0",
     "site": "Fonbet",
     "exportDate": "...",
     "account": {
@@ -328,11 +361,11 @@ const UIPanel = {
 
 **Поле `segments`:** Массив `{segmentId, segmentName}` — по одному элементу на каждый `bet` из `details.body.bets`. Имя подставляется из SegmentMapper; если маппинг не найден — `segmentName: null`.
 
-### Формат файла в GitHub (sync)
+### Формат файла в GitHub (sync, Fonbet/Pari)
 
 ```javascript
 {
-    "version": "2.2.3",
+    "version": "2.6.0",
     "account": { siteId, siteName, clientId, alias },
     "lastSync": "2026-02-08T14:30:00.000Z",
     "syncHistory": [
@@ -344,6 +377,57 @@ const UIPanel = {
     "freebets": [...],
     "finance": { deposits, withdrawals, holds },
     "bonus": [...]
+}
+```
+
+### Формат экспорта BetBoom (v2.4.0+)
+
+```javascript
+{
+    "version": "2.6.0",
+    "site": "BetBoom",
+    "exportDate": "...",
+    "account": {
+        "siteId": "betboom",
+        "siteName": "BetBoom",
+        "gamblerId": 1881653360,
+        "gamblerName": "...",
+        "alias": "Vlad"
+    },
+    "period": { "from": "...", "to": "..." },
+    "summary": {
+        totalBets, wins, losses, returns, canceled, inProgress, sold,
+        regularBets, freebetBets, bonusBets,
+        regularStaked, regularWon, freebetStaked, freebetWon,
+        bonusStaked, bonusWon,
+        totalPayments, deposits, withdrawals, depositsSum, withdrawalsSum,
+        totalStaked, totalWon, profit
+    },
+    "bets": [...],           // currency_code === 'RUB'
+    "freebetBets": [...],    // currency_code === 'FREEBET_RUB'
+    "bonusBets": [...],      // currency_code === 'BONUS_RUB'
+    "finance": {
+        "deposits": [...],
+        "withdrawals": [...]
+    }
+}
+```
+
+**Элемент bets[]:**
+```javascript
+{
+    "bet_uid": "...", "bet_id": "...",
+    "status": "BET_STATUS_TYPES_WIN", "statusName": "Выигрыш",
+    "currency_code": "RUB", "bet_type": "BET_TYPES_SINGLE",
+    "create_dttm": "...", "result_dttm": "...",
+    "bet_sum": 100, "bet_win": 225, "possible_win": 225, "coeff": 2.25,
+    "stakes": [{
+        "sport_name": "Футбол", "category_name": "Россия",
+        "tournament_name": "Первая лига", "home_team_name": "...", "away_team_name": "...",
+        "market_name": "Исход", "outcome_name": "П1",
+        "coeff": 2.25, "is_live": false, "score": "2:1",
+        "match_id": "...", "match_start_dttm": "..."
+    }]
 }
 ```
 
