@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Fonbet & Pari Collector
 // @namespace    http://tampermonkey.net/
-// @version      2.7.0
+// @version      2.8.0
 // @description  Сбор истории ставок и операций с fon.bet и pari.ru с синхронизацией в GitHub
 // @author       ilusiumgame
 // @match        https://fon.bet/account/history/operations
@@ -26,7 +26,7 @@
     'use strict';
     // 1. CONSTANTS & CONFIG
 
-    const VERSION = '2.7.0';
+    const VERSION = '2.8.0';
 
     const DEBUG_MODE = false; // Установить в true для отладки
 
@@ -185,12 +185,10 @@
         init() {
             // Читаем sessionParams из localStorage (надёжнее перехвата fetch)
             this._loadSessionParamsFromStorage();
-            // Автоматически загружаем фрибеты
-            if (this.sessionParams) {
-                this.fetchFreebets();
-            } else {
+            if (!this.sessionParams) {
                 console.error('❌ [FreebetCollector] Не удалось получить sessionParams из localStorage');
             }
+            // fetchFreebets() будет вызван по кнопке ▶ Запуск
         },
 
         _loadSessionParamsFromStorage() {
@@ -334,10 +332,10 @@
         DELAY_BETWEEN_PAGES: 200,
 
         // === Init ===
-        async init() {
+        init() {
             logger.info('[BetBoomCollector] Инициализация...');
             this._loadPeriodSettings();
-            await this.start();
+            // start() будет вызван по кнопке ▶ Запуск
         },
 
         _loadPeriodSettings() {
@@ -482,7 +480,11 @@
 
         // === Main flow ===
         async start() {
-            if (this.isCollecting) return;
+            if (this.isCollecting) {
+                logger.warn('[BetBoomCollector] Сбор уже запущен');
+                return;
+            }
+
             this.isCollecting = true;
             this.isCompleted = false;
             this.error = null;
@@ -491,15 +493,21 @@
 
             try {
                 // Step 1: User info
-                if (typeof UIPanel !== 'undefined' && UIPanel.elements?.progressStage) {
-                    UIPanel.showProgress('Получение данных пользователя...');
+                if (typeof UIPanel !== 'undefined') {
+                    UIPanel.showProgress('Этап 1: Получение информации о пользователе...', 0);
                 }
                 await this._fetchUserInfo();
 
                 // Step 2: Bets
+                if (typeof UIPanel !== 'undefined') {
+                    UIPanel.showProgress('Этап 2: Загрузка ставок...', 25);
+                }
                 await this._fetchAllBets();
 
                 // Step 3: Payments
+                if (typeof UIPanel !== 'undefined') {
+                    UIPanel.showProgress('Этап 3: Загрузка платежей...', 75);
+                }
                 await this._fetchPayments();
 
                 // Done
@@ -514,8 +522,9 @@
                 logger.info(`[BetBoomCollector] Сбор завершён: ${stats.totalBets} ставок, ${stats.totalPayments} платежей, профит: ${stats.profit} ₽`);
 
                 if (typeof UIPanel !== 'undefined') {
-                    UIPanel.showProgress(`Готово: ${stats.totalBets} ставок, ${stats.totalPayments} платежей`);
+                    UIPanel.showProgress('Сбор завершён', 100);
                     UIPanel.update();
+                    setTimeout(() => UIPanel.hideProgress(), 2000);
                 }
 
                 // Auto-sync
@@ -534,7 +543,7 @@
             } catch (error) {
                 this.error = error.message;
                 logger.error(`[BetBoomCollector] Ошибка: ${error.message}`);
-                if (typeof UIPanel !== 'undefined' && UIPanel.elements?.progressStage) {
+                if (typeof UIPanel !== 'undefined') {
                     UIPanel.showProgress(`Ошибка: ${error.message}`);
                 }
             } finally {
@@ -1878,12 +1887,14 @@
             if (!this.elements.panel) return;
 
             if (this.pageType === 'bonuses') {
+                this._updateButtons();
                 this._updateFreebetsStats();
                 this._updateSyncStatus();
                 return;
             }
 
             if (this.pageType === 'betboom') {
+                this._updateButtons();
                 this._updateBetBoomStats();
                 this._updateSyncStatus();
                 return;
@@ -1951,8 +1962,8 @@
                 ],
                 opsGrid: null,
                 buttons: [
-                    { id: 'fc-btn-refresh-fb', className: 'fc-btn fc-btn-primary', title: 'Перезагрузить список фрибетов', text: '🔄 Обновить' },
-                    { id: 'fc-btn-sync-fb', className: 'fc-btn fc-btn-sync', title: 'Синхронизировать фрибеты с GitHub', text: '📤 Sync Freebets' }
+                    { id: 'fc-btn-toggle', className: 'fc-btn fc-btn-primary', title: 'Запустить/перезапустить загрузку фрибетов', text: '▶ Запуск' },
+                    { id: 'fc-btn-sync', className: 'fc-btn fc-btn-sync', title: 'Синхронизировать фрибеты с GitHub', text: '📤 Sync' }
                 ],
                 showProgressDetails: false
             };
@@ -1967,32 +1978,23 @@
                     { label: 'Период:', id: 'fc-bb-period', defaultValue: `${periodFrom} — ${periodTo}` },
                     { label: 'Пользователь:', id: 'fc-bb-user', defaultValue: '—' }
                 ],
-                opsGrid: [
-                    { header: 'Ставки', items: [
-                        { icon: '🎯', label: 'Всего:', id: 'fc-bb-total' },
+                opsGrid: [{
+                    header: '📊 Статистика',
+                    items: [
+                        { icon: '🎯', label: 'Всего ставок:', id: 'fc-bb-total' },
                         { icon: '✅', label: 'Выигрыш:', id: 'fc-bb-wins' },
                         { icon: '❌', label: 'Проигрыш:', id: 'fc-bb-losses' },
-                        { icon: '↩️', label: 'Возврат:', id: 'fc-bb-returns' },
-                        { icon: '🚫', label: 'Отмена:', id: 'fc-bb-canceled' },
-                        { icon: '⏳', label: 'В игре:', id: 'fc-bb-progress' }
-                    ]},
-                    { header: 'По типу ставки', items: [
-                        { icon: '💰', label: 'Обычные:', id: 'fc-bb-regular' },
-                        { icon: '🎁', label: 'Фрибеты:', id: 'fc-bb-freebets' },
-                        { icon: '⭐', label: 'Бонусные:', id: 'fc-bb-bonus' }
-                    ]},
-                    { header: 'Финансы', items: [
                         { icon: '💵', label: 'Депозиты:', id: 'fc-bb-deposits' },
                         { icon: '💸', label: 'Выводы:', id: 'fc-bb-withdrawals' },
                         { icon: '📈', label: 'Профит:', id: 'fc-bb-profit', defaultValue: '0 ₽' }
-                    ]}
-                ],
+                    ]
+                }],
                 buttons: [
-                    { id: 'fc-btn-bb-restart', className: 'fc-btn fc-btn-primary', title: 'Перезапустить сбор ставок и платежей', text: '🔄 Перезапуск' },
-                    { id: 'fc-btn-bb-export', className: 'fc-btn fc-btn-export-ops', title: 'Скачать ставки и платежи в JSON', text: '💾 Экспорт' },
-                    { id: 'fc-btn-bb-sync', className: 'fc-btn fc-btn-sync', title: 'Синхронизировать с GitHub', text: '📤 Sync' }
+                    { id: 'fc-btn-toggle', className: 'fc-btn fc-btn-primary', title: 'Запустить/остановить/перезапустить сбор', text: '▶ Запуск' },
+                    { id: 'fc-btn-export-ops', className: 'fc-btn fc-btn-export-ops', title: 'Скачать ставки и платежи в JSON', text: '💾 Экспорт' },
+                    { id: 'fc-btn-sync', className: 'fc-btn fc-btn-sync', title: 'Синхронизировать с GitHub', text: '📤 Sync' }
                 ],
-                showProgressDetails: false
+                showProgressDetails: true
             };
         },
 
@@ -2685,39 +2687,15 @@
         _getActionMap() {
             if (this.pageType === 'bonuses') {
                 return {
-                    'fc-btn-refresh-fb': () => {
-                        const btn = this.elements['fc-btn-refresh-fb'];
-                        const originalText = btn.textContent;
-                        btn.textContent = '⏳ Загрузка...';
-                        btn.disabled = true;
-                        FreebetCollector.fetchFreebets().then(success => {
-                            if (success) {
-                                this.update();
-                                btn.textContent = '✅ Обновлено!';
-                            } else {
-                                btn.textContent = '❌ Ошибка';
-                            }
-                            setTimeout(() => {
-                                btn.textContent = originalText;
-                                btn.disabled = false;
-                            }, 1500);
-                        });
-                    },
-                    'fc-btn-sync-fb': () => GitHubSync.syncFreebets()
+                    'fc-btn-toggle': () => this._handleToggleFreebets(),
+                    'fc-btn-sync': () => GitHubSync.syncFreebets()
                 };
             }
             if (this.pageType === 'betboom') {
                 return {
-                    'fc-btn-bb-restart': () => {
-                        BetBoomCollector.bets = [];
-                        BetBoomCollector.payments = [];
-                        BetBoomCollector.isCompleted = false;
-                        BetBoomCollector.isCollecting = false;
-                        AppState.isCollectionCompleted = false;
-                        BetBoomCollector.start();
-                    },
-                    'fc-btn-bb-export': () => ExportModule.exportBetBoom(),
-                    'fc-btn-bb-sync': () => GitHubSync.syncBetBoom()
+                    'fc-btn-toggle': () => this._handleToggleBetBoom(),
+                    'fc-btn-export-ops': () => ExportModule.exportBetBoom(),
+                    'fc-btn-sync': () => GitHubSync.syncBetBoom()
                 };
             }
             return {
@@ -2748,7 +2726,7 @@
         _getStateHash() {
             if (this.pageType === 'bonuses') {
                 const stats = FreebetCollector.getStats();
-                return `fb:${stats.total}:${stats.active}:${stats.totalValue}:${GitHubSync.isSyncing}:${GitHubSync.lastSyncResult?.date || ''}`;
+                return `fb:${FreebetCollector.isLoaded}:${stats.total}:${stats.active}:${stats.totalValue}:${GitHubSync.isSyncing}:${GitHubSync.lastSyncResult?.date || ''}`;
             }
 
             if (this.pageType === 'betboom') {
@@ -2810,11 +2788,78 @@
          * Обновление состояния кнопок
          */
         _updateButtons() {
+            // Freebets mode
+            if (this.pageType === 'bonuses') {
+                const btnToggle = this.elements['fc-btn-toggle'];
+                if (btnToggle) {
+                    if (FreebetCollector.isLoaded) {
+                        btnToggle.textContent = '🔄 Перезапуск';
+                        btnToggle.className = 'fc-btn fc-btn-primary';
+                        btnToggle.disabled = false;
+                    } else {
+                        btnToggle.textContent = '▶ Запуск';
+                        btnToggle.className = 'fc-btn fc-btn-primary';
+                        btnToggle.disabled = false;
+                    }
+                }
+
+                const btnSync = this.elements['fc-btn-sync'];
+                if (btnSync) {
+                    const canSync = FreebetCollector.isLoaded && !GitHubSync.isSyncing;
+                    btnSync.disabled = !canSync;
+                    if (GitHubSync.isSyncing) {
+                        btnSync.classList.add('syncing');
+                        btnSync.textContent = '⏳ Syncing...';
+                    } else {
+                        btnSync.classList.remove('syncing');
+                        btnSync.textContent = '📤 Sync';
+                    }
+                }
+                return;
+            }
+
+            // BetBoom mode
+            if (this.pageType === 'betboom') {
+                const stats = BetBoomCollector.getStats();
+                const btnToggle = this.elements['fc-btn-toggle'];
+                if (btnToggle) {
+                    if (stats.isCompleted) {
+                        btnToggle.textContent = '🔄 Перезапуск';
+                        btnToggle.className = 'fc-btn fc-btn-primary';
+                        btnToggle.disabled = false;
+                    } else if (stats.isCollecting) {
+                        btnToggle.textContent = '⏹ Стоп';
+                        btnToggle.className = 'fc-btn fc-btn-secondary';
+                        btnToggle.disabled = false;
+                    } else {
+                        btnToggle.textContent = '▶ Запуск';
+                        btnToggle.className = 'fc-btn fc-btn-primary';
+                        btnToggle.disabled = false;
+                    }
+                }
+
+                const btnExport = this.elements['fc-btn-export-ops'];
+                if (btnExport) btnExport.disabled = !stats.isCompleted;
+                const btnSync = this.elements['fc-btn-sync'];
+                if (btnSync) {
+                    const canSync = stats.isCompleted && !GitHubSync.isSyncing;
+                    btnSync.disabled = !canSync;
+                    if (GitHubSync.isSyncing) {
+                        btnSync.classList.add('syncing');
+                        btnSync.textContent = '⏳ Syncing...';
+                    } else {
+                        btnSync.classList.remove('syncing');
+                        btnSync.textContent = '📤 Sync';
+                    }
+                }
+                return;
+            }
+
+            // Operations mode
             const state = this.appState;
             const isRunning = state.isInterceptorRunning;
             const isCompleted = state.isCollectionCompleted;
 
-            // Toggle кнопка
             const btnToggle = this.elements['fc-btn-toggle'];
             if (btnToggle) {
                 if (isCompleted) {
@@ -2832,7 +2877,6 @@
                 }
             }
 
-            // Sync кнопка
             const btnSync = this.elements['fc-btn-sync'];
             if (btnSync) {
                 const canSync = OperationsCollector.completed && !BetsDetailsFetcher.isProcessing && !GitHubSync.isSyncing;
@@ -2886,26 +2930,12 @@
             if (this.elements['fc-bb-total']) this.elements['fc-bb-total'].textContent = stats.totalBets;
             if (this.elements['fc-bb-wins']) this.elements['fc-bb-wins'].textContent = stats.wins;
             if (this.elements['fc-bb-losses']) this.elements['fc-bb-losses'].textContent = stats.losses;
-            if (this.elements['fc-bb-returns']) this.elements['fc-bb-returns'].textContent = stats.returns;
-            if (this.elements['fc-bb-canceled']) this.elements['fc-bb-canceled'].textContent = stats.canceled;
-            if (this.elements['fc-bb-progress']) this.elements['fc-bb-progress'].textContent = stats.inProgress;
-            if (this.elements['fc-bb-regular']) this.elements['fc-bb-regular'].textContent = stats.regularBets;
-            if (this.elements['fc-bb-freebets']) this.elements['fc-bb-freebets'].textContent = stats.freebetBets;
-            if (this.elements['fc-bb-bonus']) this.elements['fc-bb-bonus'].textContent = stats.bonusBets;
             if (this.elements['fc-bb-deposits']) this.elements['fc-bb-deposits'].textContent = stats.deposits;
             if (this.elements['fc-bb-withdrawals']) this.elements['fc-bb-withdrawals'].textContent = stats.withdrawals;
             if (this.elements['fc-bb-profit']) this.elements['fc-bb-profit'].textContent = `${stats.profit.toLocaleString('ru-RU')} ₽`;
             if (this.elements['fc-bb-user'] && BetBoomCollector.gamblerId) {
                 this.elements['fc-bb-user'].textContent = BetBoomCollector.gamblerId;
             }
-
-            // Обновляем состояние кнопок
-            const btnExport = this.elements['fc-btn-bb-export'];
-            if (btnExport) btnExport.disabled = !stats.isCompleted;
-            const btnSync = this.elements['fc-btn-bb-sync'];
-            if (btnSync) btnSync.disabled = !stats.isCompleted || !GitHubSync.isConfigured();
-            const btnRestart = this.elements['fc-btn-bb-restart'];
-            if (btnRestart) btnRestart.disabled = stats.isCollecting;
         },
 
         /**
@@ -2982,6 +3012,56 @@
             XHRInterceptor.start();
             OperationsCollector.start();
             UIPanel.showProgress('Этап 1: Сбор операций...', 0);
+        },
+
+        /**
+         * Обработчик toggle-кнопки для Freebets
+         */
+        _handleToggleFreebets() {
+            // Completed/Loaded → reload
+            if (FreebetCollector.isLoaded) {
+                console.log('[UIPanel] Freebets перезапуск — перезагрузка страницы...');
+                location.reload();
+                return;
+            }
+
+            // Idle → start
+            console.log('[UIPanel] Freebets запуск загрузки...');
+            FreebetCollector.fetchFreebets().then(success => {
+                if (success) {
+                    this.update();
+                }
+            });
+        },
+
+        /**
+         * Обработчик toggle-кнопки для BetBoom
+         */
+        _handleToggleBetBoom() {
+            const stats = BetBoomCollector.getStats();
+
+            // Completed → restart
+            if (stats.isCompleted) {
+                console.log('[UIPanel] BetBoom перезапуск...');
+                BetBoomCollector.bets = [];
+                BetBoomCollector.payments = [];
+                BetBoomCollector.isCompleted = false;
+                BetBoomCollector.isCollecting = false;
+                AppState.isCollectionCompleted = false;
+                BetBoomCollector.start();
+                return;
+            }
+
+            // Collecting → stop (reload page)
+            if (stats.isCollecting) {
+                console.log('[UIPanel] BetBoom остановка — перезагрузка страницы...');
+                location.reload();
+                return;
+            }
+
+            // Idle → start
+            console.log('[UIPanel] BetBoom запуск сбора...');
+            BetBoomCollector.start();
         },
 
         /**
@@ -4649,9 +4729,8 @@
 
         } else if (pageType === 'betboom') {
             // Страница BetBoom: инициализируем BetBoomCollector
-            BetBoomCollector._loadPeriodSettings();
-            UIPanel.create();
             BetBoomCollector.init();
+            UIPanel.create();
 
             // Экспорт в unsafeWindow для консольного доступа
             const exportTarget = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
