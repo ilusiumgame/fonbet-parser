@@ -572,9 +572,9 @@
                 logger.info(`[BetBoomCollector] Сбор завершён: ${stats.totalBets} ставок, ${stats.totalPayments} платежей, профит: ${stats.profit} ₽`);
 
                 if (typeof UIPanel !== 'undefined') {
-                    UIPanel.showProgress('Сбор завершён', 100);
+                    UIPanel.showProgress('✅ Готово к экспорту!', 100);
                     UIPanel.update();
-                    setTimeout(() => UIPanel.hideProgress(), 2000);
+                    // Прогресс остаётся видимым (как на Fonbet/Pari)
                 }
 
                 // Auto-sync
