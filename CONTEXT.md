@@ -418,8 +418,20 @@ const UIPanel = {
         { "segmentId": 11918, "segmentName": "Англия. Премьер-лига. Сезон 25/26" }
     ],
     "operations": [
-        { "operationId": 1, "operationType": "Сделана ставка", "sum": -4010000, "time": 1770488783 },
-        { "operationId": 4, "operationType": "Ставка проиграна", "sum": 0, "time": 1770491060 }
+        {
+            "operationId": 1,
+            "operationType": "Прогноз принят",
+            "sum": -4010000,
+            "time": 1770488783,
+            "balance": 672978000  // Остаток на счёте после операции
+        },
+        {
+            "operationId": 4,
+            "operationType": "Проигрыш",
+            "sum": 0,
+            "time": 1770491060,
+            "balance": 672978000
+        }
     ],
     "details": { /* coupon/info response */ }
 }
@@ -427,22 +439,34 @@ const UIPanel = {
 
 **Поле `segments`:** Массив `{segmentId, segmentName}` — по одному элементу на каждый `bet` из `details.body.bets`. Имя подставляется из SegmentMapper; если маппинг не найден — `segmentName: null`.
 
+**Поле `balance` (v2.9.3):** Остаток на счёте после выполнения операции. Рассчитывается по формуле `balance_before = balance_after - sum`, где текущий баланс берётся из `/session/info`. Формула универсальна для всех типов операций (выигрыши, ставки, депозиты, выводы), так как API возвращает `sum` с правильным знаком.
+
 ### Формат файла в GitHub (sync, Fonbet/Pari)
 
 ```javascript
 {
-    "version": "2.9.0",
-    "account": { siteId, siteName, clientId, alias },
+    "version": "2.9.3",
+    "account": {
+        siteId,
+        siteName,
+        clientId,
+        alias,
+        currentBalance: 672978000  // Текущий баланс счёта (v2.9.3)
+    },
     "lastSync": "2026-02-08T14:30:00.000Z",
     "syncHistory": [
         { date, operationsAdded, operationsUpdated, totalAfterSync }
     ],
     "summary": { ... },
-    "bets": [...],
-    "fastBets": [...],
-    "freebets": [...],
-    "finance": { deposits, withdrawals, holds },
-    "bonus": [...]
+    "bets": [...],           // Каждая операция содержит поле balance
+    "fastBets": [...],       // Каждая операция содержит поле balance
+    "freebets": [...],       // Каждая операция содержит поле balance
+    "finance": {
+        deposits: [...],     // Каждая операция содержит поле balance
+        withdrawals: [...],  // Каждая операция содержит поле balance
+        holds: [...]         // Каждая операция содержит поле balance
+    },
+    "bonus": [...]           // Каждая операция содержит поле balance
 }
 ```
 
@@ -450,7 +474,7 @@ const UIPanel = {
 
 ```javascript
 {
-    "version": "2.9.0",
+    "version": "2.9.3",
     "site": "BetBoom",
     "exportDate": "...",
     "account": {
@@ -459,6 +483,7 @@ const UIPanel = {
         "gamblerId": 1881653360,
         "gamblerName": "...",
         "alias": "Vlad"
+        // Примечание: BetBoom не использует balance calculation (нет /session/info endpoint)
     },
     "period": { "from": "...", "to": "..." },
     "summary": {
@@ -523,14 +548,14 @@ collector.operationsCollector.stop()
 collector.operationsCollector.getStats()
 collector.operationsCollector.getGroupedOperations()
 collector.fetchBetsDetails()
-collector.exportOperations()
+await collector.exportOperations()                // async (v2.9.3): получает баланс перед экспортом
 
 // Фрибеты (v2.9.0): доступны на странице операций через табы
 collector.freebetCollector.isLoaded               // Загружены ли фрибеты
 collector.freebetCollector.getStats()             // Расширенная статистика (incl. earliestExpiry)
 collector.freebetCollector.getActiveFreebets()    // Список активных фрибетов
 collector.freebetCollector.fetchFreebets()        // Перезагрузить фрибеты
-collector.syncFreebets()                          // Синхронизировать фрибеты в GitHub
+await collector.syncFreebets()                    // async: Синхронизировать фрибеты в GitHub
 
 // Анализ ошибок
 collector.betsDetailsFetcher.getFailedMarkers()
@@ -551,15 +576,15 @@ collector.freebetCollector.getStats()             // Расширенная ст
 collector.freebetCollector.getActiveFreebets()    // Список активных фрибетов
 collector.freebetCollector.fetchFreebets()        // Перезагрузить фрибеты
 collector.freebetCollector.sessionParams          // Текущие параметры сессии
-collector.syncFreebets()                          // Синхронизировать в GitHub
+await collector.syncFreebets()                    // async: Синхронизировать в GitHub
 ```
 
-### Синхронизация (v2.1.0)
+### Синхронизация (v2.9.3)
 ```javascript
-collector.sync()                                  // Синхронизировать с GitHub
-collector.changeAlias('NewName')                  // Сменить alias (переименовать файл)
+await collector.sync()                            // async: Синхронизировать с GitHub (получает баланс)
+await collector.changeAlias('NewName')            // async: Сменить alias (переименовать файл)
 collector.githubSync.isConfigured()               // Проверить настройку
-collector.githubSync.testConnection()             // Тест подключения
+await collector.githubSync.testConnection()       // async: Тест подключения
 collector.githubSync.getSyncStatus()              // Текущий статус sync
 collector.githubSync.showSetupDialog()            // Открыть диалог настройки
 ```
