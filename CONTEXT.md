@@ -2,7 +2,7 @@
 
 Tampermonkey скрипт для сбора истории операций с fon.bet, pari.ru и betboom.ru. Работает на **любой странице** всех трёх сайтов (универсальная поддержка). Автоопределение сайта, перехват XHR/fetch, сбор операций через API, группировка по marker, автоматическая загрузка деталей ставок, экспорт в JSON v2.1, инкрементальная синхронизация с GitHub, сбор фрибетов.
 
-**Версия:** v2.9.2 — Универсальная поддержка страниц + унифицированный UI с табами для всех сайтов
+**Версия:** v2.9.3 — Расчёт остатка баланса для каждой операции
 
 ---
 
@@ -11,7 +11,7 @@ Tampermonkey скрипт для сбора истории операций с f
 ```
 Файл:    universal_collector.user.js
 Строки:  ~5200
-Версия:  2.9.2
+Версия:  2.9.3
 ```
 
 ---
@@ -272,16 +272,18 @@ const XHRInterceptor = {
 };
 ```
 
-### ExportModule (v2.7.0)
+### ExportModule (v2.9.3)
 ```javascript
-_buildExportData()      // Формирование объекта данных (shared с GitHubSync)
-exportOperations()      // Экспорт Fonbet/Pari в файл через _buildExportData() + _downloadJSON()
-exportBetBoom()         // Экспорт BetBoom в файл через BetBoomCollector.buildExportData() + _downloadJSON()
+_fetchCurrentBalance()           // async: Получение текущего баланса из /session/info
+_calculateBalances(operations, currentBalance)  // Расчёт balance для каждой операции
+_buildExportData(currentBalance) // Формирование объекта данных (shared с GitHubSync)
+exportOperations()               // async: Экспорт Fonbet/Pari в файл через _buildExportData() + _downloadJSON()
+exportBetBoom()                  // Экспорт BetBoom в файл через BetBoomCollector.buildExportData() + _downloadJSON()
 _downloadJSON(data, prefix, defaultPrefix)  // Общий метод скачивания JSON
-_formatBetGroup(group)  // Форматирование ставок
-_formatFastBet(group)   // Форматирование быстрых ставок
-_formatFinanceOp(group) // Форматирование финансовых операций
-_formatBonusOp(group)   // Форматирование бонусов
+_formatBetGroup(group, balanceMap)    // Форматирование ставок + balance
+_formatFastBet(group, balanceMap)     // Форматирование быстрых ставок + balance
+_formatFinanceOp(group, balanceMap)   // Форматирование финансовых операций + balance
+_formatBonusOp(group, balanceMap)     // Форматирование бонусов + balance
 ```
 
 ### GitHubSync (v2.1.0+)

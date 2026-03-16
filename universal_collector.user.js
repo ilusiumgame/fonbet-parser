@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Fonbet & Pari Collector
 // @namespace    http://tampermonkey.net/
-// @version      2.9.2
+// @version      2.9.3
 // @description  Сбор истории ставок и операций с fon.bet и pari.ru с синхронизацией в GitHub
 // @author       ilusiumgame
 // @match        https://fon.bet/*
@@ -23,7 +23,7 @@
     'use strict';
     // 1. CONSTANTS & CONFIG
 
-    const VERSION = '2.9.2';
+    const VERSION = '2.9.3';
 
     const DEBUG_MODE = false; // Установить в true для отладки
 
@@ -3857,17 +3857,74 @@
         },
 
         /**
+         * Получить текущий баланс из /session/info
+         * @returns {Promise<number>} — текущий баланс или 0
+         */
+        async _fetchCurrentBalance() {
+            try {
+                const baseUrl = OperationsCollector.baseApiUrl || SiteDetector.getFallbackApiBase() + '/session/client';
+                const sessionInfoUrl = baseUrl.replace('/session/client', '/session/info');
+
+                const response = await fetch(sessionInfoUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+                    body: JSON.stringify(OperationsCollector.sessionParams)
+                });
+
+                if (!response.ok) {
+                    logger.warn('[ExportModule] Не удалось получить баланс из /session/info');
+                    return 0;
+                }
+
+                const data = await response.json();
+                return data.saldo || 0;
+            } catch (error) {
+                logger.warn('[ExportModule] Ошибка при получении баланса:', error.message);
+                return 0;
+            }
+        },
+
+        /**
+         * Рассчитать баланс для каждой операции
+         * @param {Array} operations — массив операций
+         * @param {number} currentBalance — текущий баланс счёта
+         * @returns {Map} — Map с ключом "saldoId_Id" и значением balance
+         */
+        _calculateBalances(operations, currentBalance) {
+            // Сортируем операции по времени (от новых к старым)
+            const sorted = [...operations].sort((a, b) => b.time - a.time);
+
+            const balanceMap = new Map();
+            let runningBalance = currentBalance;
+
+            for (const op of sorted) {
+                // Сохраняем баланс ПОСЛЕ этой операции
+                const key = `${op.saldoId}_${op.Id}`;
+                balanceMap.set(key, runningBalance);
+
+                // Вычисляем баланс ДО этой операции: balance_before = balance_after - sum
+                runningBalance = runningBalance - op.sum;
+            }
+
+            return balanceMap;
+        },
+
+        /**
          * Формирование данных экспорта (без скачивания файла)
          * Используется как в exportOperations(), так и в GitHubSync
+         * @param {number} currentBalance — текущий баланс для расчёта остатков
          * @returns {object|null} — объект данных или null если нет данных
          */
-        _buildExportData() {
+        _buildExportData(currentBalance = 0) {
             const operations = OperationsCollector.getOperations();
             const grouped = OperationsCollector.getGroupedOperations();
             const stats = OperationsCollector.getStats();
             const detailsStats = BetsDetailsFetcher.getStats();
 
             if (operations.length === 0) return null;
+
+            // Рассчитываем балансы для всех операций
+            const balanceMap = this._calculateBalances(operations, currentBalance);
 
             const groupValues = Object.values(grouped);
 
@@ -3886,7 +3943,8 @@
                     siteId: SiteDetector.currentSite?.id,
                     siteName: SiteDetector.getSiteName(),
                     clientId: OperationsCollector.sessionParams?.clientId,
-                    alias: GitHubSync.accountAlias || ''
+                    alias: GitHubSync.accountAlias || '',
+                    currentBalance: currentBalance
                 },
 
                 summary: {
@@ -3903,31 +3961,33 @@
                     detailsSkipped: fastBets.length
                 },
 
-                bets: bets.map(g => this._formatBetGroup(g)),
-                fastBets: fastBets.map(g => this._formatFastBet(g)),
-                freebets: freebets.map(g => this._formatBetGroup(g)),
+                bets: bets.map(g => this._formatBetGroup(g, balanceMap)),
+                fastBets: fastBets.map(g => this._formatFastBet(g, balanceMap)),
+                freebets: freebets.map(g => this._formatBetGroup(g, balanceMap)),
                 finance: {
                     deposits: finance
                         .filter(g => g.operations.some(op => op.operationId === 69))
-                        .map(g => this._formatFinanceOp(g)),
+                        .map(g => this._formatFinanceOp(g, balanceMap)),
                     withdrawals: finance
                         .filter(g => g.operations.some(op => op.operationId === 90))
-                        .map(g => this._formatFinanceOp(g)),
+                        .map(g => this._formatFinanceOp(g, balanceMap)),
                     holds: finance
                         .filter(g => g.operations.some(op => op.operationId === 460 || op.operationId === 461))
-                        .map(g => this._formatFinanceOp(g))
+                        .map(g => this._formatFinanceOp(g, balanceMap))
                 },
-                bonus: bonus.map(g => this._formatBonusOp(g))
+                bonus: bonus.map(g => this._formatBonusOp(g, balanceMap))
             };
         },
 
         /**
          * Экспорт операций в JSON файл
          */
-        exportOperations() {
+        async exportOperations() {
             logger.debug('💰 [ExportModule] Начало экспорта операций v2.1...');
 
-            const exportData = this._buildExportData();
+            // Получаем текущий баланс
+            const currentBalance = await this._fetchCurrentBalance();
+            const exportData = this._buildExportData(currentBalance);
 
             if (!exportData) {
                 const stats = OperationsCollector.getStats();
@@ -4037,7 +4097,7 @@
         },
 
         // Форматирование группы ставок
-        _formatBetGroup(group) {
+        _formatBetGroup(group, balanceMap) {
             const firstOp = group.operations[0];
             const bets = group.details?.body?.bets || [];
             return {
@@ -4050,18 +4110,22 @@
                     segmentId: b.segmentId,
                     segmentName: SegmentMapper.getName(b.segmentId)
                 })),
-                operations: group.operations.map(op => ({
-                    operationId: op.operationId,
-                    operationType: OperationsCollector.OPERATION_NAMES[op.operationId],
-                    sum: op.sum,
-                    time: op.time
-                })),
+                operations: group.operations.map(op => {
+                    const key = `${op.saldoId}_${op.Id}`;
+                    return {
+                        operationId: op.operationId,
+                        operationType: OperationsCollector.OPERATION_NAMES[op.operationId],
+                        sum: op.sum,
+                        time: op.time,
+                        balance: balanceMap?.get(key) || null
+                    };
+                }),
                 details: group.details || null
             };
         },
 
         // Форматирование быстрой ставки
-        _formatFastBet(group) {
+        _formatFastBet(group, balanceMap) {
             const firstOp = group.operations[0];
             return {
                 marker: group.marker,
@@ -4069,17 +4133,22 @@
                 time: firstOp?.time,
                 timeFormatted: firstOp ? new Date(firstOp.time * 1000).toISOString() : null,
                 sum: firstOp?.sum,
-                operations: group.operations.map(op => ({
-                    operationId: op.operationId,
-                    operationType: OperationsCollector.OPERATION_NAMES[op.operationId],
-                    sum: op.sum
-                }))
+                operations: group.operations.map(op => {
+                    const key = `${op.saldoId}_${op.Id}`;
+                    return {
+                        operationId: op.operationId,
+                        operationType: OperationsCollector.OPERATION_NAMES[op.operationId],
+                        sum: op.sum,
+                        balance: balanceMap?.get(key) || null
+                    };
+                })
             };
         },
 
         // Форматирование финансовой операции
-        _formatFinanceOp(group) {
+        _formatFinanceOp(group, balanceMap) {
             const firstOp = group.operations[0];
+            const key = firstOp ? `${firstOp.saldoId}_${firstOp.Id}` : null;
             return {
                 marker: group.marker,
                 type: group.finalStatus,
@@ -4087,19 +4156,22 @@
                 timeFormatted: firstOp ? new Date(firstOp.time * 1000).toISOString() : null,
                 sum: firstOp?.sum,
                 bonusSum: firstOp?.bonusSum,
-                holdSum: firstOp?.holdSum
+                holdSum: firstOp?.holdSum,
+                balance: key && balanceMap ? balanceMap.get(key) || null : null
             };
         },
 
         // Форматирование бонуса
-        _formatBonusOp(group) {
+        _formatBonusOp(group, balanceMap) {
             const firstOp = group.operations[0];
+            const key = firstOp ? `${firstOp.saldoId}_${firstOp.Id}` : null;
             return {
                 marker: group.marker,
                 time: firstOp?.time,
                 timeFormatted: firstOp ? new Date(firstOp.time * 1000).toISOString() : null,
                 sum: firstOp?.sum,
-                bonusSum: firstOp?.bonusSum
+                bonusSum: firstOp?.bonusSum,
+                balance: key && balanceMap ? balanceMap.get(key) || null : null
             };
         }
     };
@@ -4503,7 +4575,8 @@
             try {
                 // Этап 1: Подготовка данных
                 UIPanel.showProgress('Sync 1/4: Подготовка данных...', 25);
-                const localData = ExportModule._buildExportData();
+                const currentBalance = await ExportModule._fetchCurrentBalance();
+                const localData = ExportModule._buildExportData(currentBalance);
                 if (!localData) {
                     throw new Error('NO_DATA');
                 }
