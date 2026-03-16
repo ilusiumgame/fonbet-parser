@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Fonbet & Pari Collector
 // @namespace    http://tampermonkey.net/
-// @version      2.9.1
+// @version      2.9.2
 // @description  Сбор истории ставок и операций с fon.bet и pari.ru с синхронизацией в GitHub
 // @author       ilusiumgame
 // @match        https://fon.bet/*
@@ -23,7 +23,7 @@
     'use strict';
     // 1. CONSTANTS & CONFIG
 
-    const VERSION = '2.9.1';
+    const VERSION = '2.9.2';
 
     const DEBUG_MODE = false; // Установить в true для отладки
 
@@ -5065,6 +5065,7 @@
         } else if (pageType === 'betboom') {
             // Страница BetBoom: инициализируем BetBoomCollector
             BetBoomCollector.init();
+            ExportModule.init(AppState);
             UIPanel.create();
 
             // Экспорт в unsafeWindow для консольного доступа
@@ -5096,6 +5097,7 @@
                 ExportModule.init(AppState);
             } else {
                 BetBoomCollector.init();
+                ExportModule.init(AppState);
             }
 
             UIPanel.create();
