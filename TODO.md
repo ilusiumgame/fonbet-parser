@@ -1,4 +1,4 @@
-# TODO: Fonbet & Pari & BetBoom Collector v2.9.1
+# TODO: Fonbet & Pari & BetBoom Collector v2.9.2
 
 Мультисайтовый сбор данных с fon.bet, pari.ru и betboom.ru.
 
@@ -24,6 +24,20 @@ BetBoom не имеет явного поля "быстрые ставки" в A
 ---
 
 ## Завершённые задачи
+
+### F-6.5: BetBoom экспорт — исправление TypeError
+
+**Статус:** выполнено v2.9.2
+
+Исправлена ошибка при экспорте данных BetBoom:
+
+- [x] Добавлен вызов `ExportModule.init(AppState)` для pageType 'betboom'
+- [x] Добавлен вызов `ExportModule.init(AppState)` для pageType 'betboom-universal'
+- [x] Исправлен TypeError: "Cannot read properties of null (reading 'config')" в строке 4032
+
+**Детали:** ExportModule.exportBetBoom() обращался к `this.appState.config.export`, но appState был null, так как init() не вызывался для BetBoom страниц.
+
+---
 
 ### F-6.4: Новые типы операций (8, 41, 89)
 
